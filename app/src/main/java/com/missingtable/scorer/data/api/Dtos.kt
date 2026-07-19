@@ -85,6 +85,10 @@ data class RosterPlayer(
 ) {
     val label: String
         get() = displayName ?: listOfNotNull(firstName, lastName).joinToString(" ").ifBlank { "#$jerseyNumber" }
+
+    /** Name without the jersey-number fallback; null when only a number is known. */
+    val nameOnly: String?
+        get() = (displayName ?: listOfNotNull(firstName, lastName).joinToString(" ")).ifBlank { null }
 }
 
 @Serializable
@@ -117,6 +121,28 @@ data class SubstitutionRequest(
     @SerialName("match_minute") val matchMinute: Int? = null,
     @SerialName("extra_time") val extraTime: Int? = null,
     @SerialName("client_event_id") val clientEventId: String,
+)
+
+@Serializable
+data class LineupPosition(
+    @SerialName("player_id") val playerId: Int,
+    val position: String,
+    @SerialName("jersey_number") val jerseyNumber: Int? = null,
+    @SerialName("display_name") val displayName: String? = null,
+)
+
+@Serializable
+data class LineupSaveRequest(
+    @SerialName("formation_name") val formationName: String,
+    val positions: List<LineupPosition>,
+)
+
+@Serializable
+data class LineupResponse(
+    @SerialName("match_id") val matchId: Int? = null,
+    @SerialName("team_id") val teamId: Int? = null,
+    @SerialName("formation_name") val formationName: String = "",
+    val positions: List<LineupPosition> = emptyList(),
 )
 
 @Serializable

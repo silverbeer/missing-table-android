@@ -58,14 +58,48 @@ private fun AppNav(container: AppContainer, startDestination: String) {
             MatchListScreen(
                 container = container,
                 onOpenMatch = { match ->
-                    navController.navigate(
-                        "live/${match.id}?seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
-                    )
+                    val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
+                    if (match.matchStatus == "scheduled") {
+                        val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
+                            "&awayName=${android.net.Uri.encode(match.awayTeamName)}"
+                        navController.navigate(
+                            "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
+                        )
+                    } else {
+                        navController.navigate("live/${match.id}?$common")
+                    }
                 },
                 onLogout = {
                     runBlocking { container.tokenStore.clear() }
                     navController.navigate("login") {
                         popUpTo("matches") { inclusive = true }
+                    }
+                },
+            )
+        }
+        composable(
+            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}"
+        ) { entry ->
+            val args = entry.arguments
+            val matchId = args?.getString("matchId")?.toIntOrNull() ?: return@composable
+            val homeId = args.getString("homeId")?.toIntOrNull() ?: return@composable
+            val awayId = args.getString("awayId")?.toIntOrNull() ?: return@composable
+            val seasonId = args.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
+            val ageGroupId = args.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+            com.missingtable.scorer.ui.lineup.LineupScreen(
+                container = container,
+                matchId = matchId,
+                homeTeamId = homeId,
+                homeTeamName = args.getString("homeName") ?: "Home",
+                awayTeamId = awayId,
+                awayTeamName = args.getString("awayName") ?: "Away",
+                seasonId = seasonId,
+                onBack = { navController.popBackStack() },
+                onStartMatch = {
+                    navController.navigate(
+                        "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
+                    ) {
+                        popUpTo("matches")
                     }
                 },
             )

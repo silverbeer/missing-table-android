@@ -87,6 +87,7 @@ fun LiveScreen(
 ) {
     var state by remember { mutableStateOf<LiveMatchState?>(null) }
     var rosters by remember { mutableStateOf<Map<Int, List<RosterPlayer>>>(emptyMap()) }
+    var starters by remember { mutableStateOf<Map<Int, Set<Int>>>(emptyMap()) }
     var flow by remember { mutableStateOf<ActionFlow>(ActionFlow.None) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
@@ -116,11 +117,36 @@ fun LiveScreen(
         val s = state ?: return@LaunchedEffect
         if (seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
         val loaded = mutableMapOf<Int, List<RosterPlayer>>()
+        val startingXi = mutableMapOf<Int, Set<Int>>()
         listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
             runCatching { container.api.roster(teamId, seasonId, null) }
                 .onSuccess { loaded[teamId] = it.roster }
+            runCatching { container.api.getLineup(matchId, teamId) }
+                .onSuccess { lineup ->
+                    if (lineup.positions.isNotEmpty()) {
+                        startingXi[teamId] = lineup.positions.map { it.playerId }.toSet()
+                    }
+                }
         }
         rosters = loaded
+        starters = startingXi
+    }
+
+    // On-pitch set: starting XI adjusted by substitution events (oldest first).
+    // Null when no lineup was saved — pickers then fall back to the full roster.
+    fun onPitch(teamId: Int): Set<Int>? {
+        val base = starters[teamId] ?: return null
+        var current = base
+        state?.recentEvents
+            ?.filter { it.eventType == "substitution" && it.teamId == teamId }
+            ?.reversed()
+            ?.forEach { sub ->
+                val inId = sub.playerId
+                val outId = sub.playerOutId
+                if (outId != null) current = current - outId
+                if (inId != null) current = current + inId
+            }
+        return current
     }
 
     // 1s clock tick
@@ -385,17 +411,26 @@ fun LiveScreen(
 
                 ActionFlow.SubPickTeam -> TeamPickSheet(s, onPick = { flow = ActionFlow.SubPickOut(it) })
 
-                is ActionFlow.SubPickOut -> PlayerPickSheet(
-                    title = "Player OFF",
-                    players = rosters[currentFlow.teamId].orEmpty(),
-                    onPick = { out, _ ->
-                        if (out != null) flow = ActionFlow.SubPickIn(currentFlow.teamId, out)
-                    },
-                )
+                is ActionFlow.SubPickOut -> {
+                    val teamRoster = rosters[currentFlow.teamId].orEmpty()
+                    val pitch = onPitch(currentFlow.teamId)
+                    PlayerPickSheet(
+                        title = "Player OFF",
+                        players = if (pitch != null) teamRoster.filter { it.id in pitch } else teamRoster,
+                        onPick = { out, _ ->
+                            if (out != null) flow = ActionFlow.SubPickIn(currentFlow.teamId, out)
+                        },
+                    )
+                }
 
                 is ActionFlow.SubPickIn -> PlayerPickSheet(
                     title = "Player ON (for ${currentFlow.out.label})",
-                    players = rosters[currentFlow.teamId].orEmpty().filter { it.id != currentFlow.out.id },
+                    players = run {
+                        val pitch = onPitch(currentFlow.teamId)
+                        rosters[currentFlow.teamId].orEmpty().filter {
+                            it.id != currentFlow.out.id && (pitch == null || it.id !in pitch)
+                        }
+                    },
                     onPick = { inn, _ ->
                         if (inn != null) {
                             flow = ActionFlow.None

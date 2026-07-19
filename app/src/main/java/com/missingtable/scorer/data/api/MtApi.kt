@@ -36,6 +36,16 @@ interface MtApi {
         @Query("age_group_id") ageGroupId: Int? = null,
     ): RosterResponse
 
+    @GET("api/matches/{id}/lineup/{teamId}")
+    suspend fun getLineup(@Path("id") matchId: Int, @Path("teamId") teamId: Int): LineupResponse
+
+    @retrofit2.http.PUT("api/matches/{id}/lineup/{teamId}")
+    suspend fun putLineup(
+        @Path("id") matchId: Int,
+        @Path("teamId") teamId: Int,
+        @Body body: LineupSaveRequest,
+    ): LineupResponse
+
     @POST("api/matches/{id}/live/goal")
     suspend fun postGoal(@Path("id") matchId: Int, @Body body: GoalRequest): JsonObject
 
