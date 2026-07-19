@@ -54,8 +54,9 @@ fun MatchListScreen(
         val today = LocalDate.now()
         runCatching {
             container.api.matches(
-                startDate = today.minusDays(14).toString(),
-                endDate = today.plusDays(14).toString(),
+                // Wide window so the list isn't empty off-season
+                startDate = today.minusDays(60).toString(),
+                endDate = today.plusDays(30).toString(),
             )
         }.onSuccess {
             matches = it
