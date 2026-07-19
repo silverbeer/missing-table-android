@@ -1,6 +1,5 @@
 package com.missingtable.scorer.ui.live
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -104,21 +103,24 @@ fun LiveScreen(
     // Initial load + 15s poll
     LaunchedEffect(matchId) {
         refresh()
-        // Load rosters for both teams once state is known
-        state?.let { s ->
-            if (seasonId != null) {
-                val loaded = mutableMapOf<Int, List<RosterPlayer>>()
-                listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
-                    runCatching { container.api.roster(teamId, seasonId, ageGroupId) }
-                        .onSuccess { loaded[teamId] = it }
-                }
-                rosters = loaded
-            }
-        }
         while (true) {
             delay(15_000)
             refresh()
         }
+    }
+
+    // Load rosters once both team ids are known. Fetch unfiltered by age
+    // group first; the roster endpoint's age filter can hide players with
+    // no age_group_id set, so only use it as a fallback refinement.
+    LaunchedEffect(state?.homeTeamId, state?.awayTeamId) {
+        val s = state ?: return@LaunchedEffect
+        if (seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
+        val loaded = mutableMapOf<Int, List<RosterPlayer>>()
+        listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
+            runCatching { container.api.roster(teamId, seasonId, null) }
+                .onSuccess { loaded[teamId] = it.roster }
+        }
+        rosters = loaded
     }
 
     // 1s clock tick
@@ -244,18 +246,12 @@ fun LiveScreen(
 
             // Goal buttons
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { s.homeTeamId?.let { flow = ActionFlow.GoalPickScorer(it) } },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(64.dp),
-                ) { Text("GOAL ${s.homeTeamName.take(12)}") }
-                Button(
-                    onClick = { s.awayTeamId?.let { flow = ActionFlow.GoalPickScorer(it) } },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(64.dp),
-                ) { Text("GOAL ${s.awayTeamName.take(12)}") }
+                GoalButton(s.homeTeamName, Modifier.weight(1f)) {
+                    s.homeTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                }
+                GoalButton(s.awayTeamName, Modifier.weight(1f)) {
+                    s.awayTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -275,6 +271,14 @@ fun LiveScreen(
 
             Spacer(Modifier.height(12.dp))
             Text("Timeline", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            if (s.recentEvents.isEmpty()) {
+                Text(
+                    "No events yet — kick off and start scoring.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
             LazyColumn(
                 Modifier
                     .fillMaxSize()
@@ -291,7 +295,7 @@ fun LiveScreen(
                         ) {
                             Text(
                                 e.matchMinute?.let { m ->
-                                    e.extraTime?.let { "$m+$it'" } ?: "$m'"
+                                    e.extraTime?.takeIf { it > 0 }?.let { "$m+$it'" } ?: "$m'"
                                 } ?: "",
                                 modifier = Modifier.padding(end = 8.dp),
                                 style = MaterialTheme.typography.labelMedium,
@@ -460,24 +464,38 @@ fun LiveScreen(
 }
 
 @Composable
+private fun GoalButton(teamName: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Button(onClick = onClick, modifier = modifier.height(72.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("GOAL", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                teamName,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun TeamPickSheet(s: LiveMatchState, onPick: (Int) -> Unit) {
     Column(Modifier.padding(16.dp)) {
         Text("Which team?", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { s.homeTeamId?.let(onPick) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp),
-            ) { Text(s.homeTeamName.take(14)) }
-            Button(
-                onClick = { s.awayTeamId?.let(onPick) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp),
-            ) { Text(s.awayTeamName.take(14)) }
-        }
+        Button(
+            onClick = { s.homeTeamId?.let(onPick) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) { Text(s.homeTeamName, maxLines = 1) }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { s.awayTeamId?.let(onPick) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) { Text(s.awayTeamName, maxLines = 1) }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -510,32 +528,36 @@ private fun PlayerPickSheet(
         }
         if (players.isNotEmpty()) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 72.dp),
+                columns = GridCells.Fixed(4),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(((players.size / 4 + 1) * 84).coerceAtMost(340).dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
             ) {
                 items(players, key = { it.id }) { p ->
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .background(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                CircleShape,
-                            )
-                            .padding(8.dp)
-                            .fillMaxWidth()
-                            .height(64.dp),
+                    androidx.compose.material3.Surface(
+                        onClick = { onPick(p, null) },
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.height(76.dp),
                     ) {
-                        TextButton(onClick = { onPick(p, null) }) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    "#${p.jerseyNumber ?: "?"}",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(p.label.take(10), style = MaterialTheme.typography.labelSmall)
-                            }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            Text(
+                                "${p.jerseyNumber ?: "?"}",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                p.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }

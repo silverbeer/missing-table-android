@@ -18,15 +18,27 @@ android {
     }
 
     buildTypes {
-        debug {
-            buildConfigField("String", "BASE_URL", "\"https://api.missingtable.com\"")
-        }
         release {
             isMinifyEnabled = false
-            buildConfigField("String", "BASE_URL", "\"https://api.missingtable.com\"")
             // Sideloaded personal app: sign with the debug key so
             // assembleRelease produces an installable APK without a keystore.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    flavorDimensions += "env"
+    productFlavors {
+        create("local") {
+            dimension = "env"
+            applicationIdSuffix = ".local"
+            // 10.0.2.2 = host loopback from the Android emulator
+            buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:8000\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+        }
+        create("prod") {
+            dimension = "env"
+            buildConfigField("String", "BASE_URL", "\"https://api.missingtable.com\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
         }
     }
     compileOptions {

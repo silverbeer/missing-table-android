@@ -78,9 +78,13 @@ fun LoginScreen(container: AppContainer, onLoggedIn: () -> Unit) {
                     }.onSuccess {
                         loading = false
                         onLoggedIn()
-                    }.onFailure {
+                    }.onFailure { e ->
                         loading = false
-                        error = "Login failed — check credentials"
+                        error = when {
+                            e is retrofit2.HttpException && e.code() == 401 ->
+                                "Login failed — check credentials"
+                            else -> "Can't reach server: ${e.message ?: e::class.simpleName}"
+                        }
                     }
                 }
             },

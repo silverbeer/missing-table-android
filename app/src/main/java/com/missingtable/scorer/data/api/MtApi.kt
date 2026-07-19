@@ -34,7 +34,7 @@ interface MtApi {
         @Path("teamId") teamId: Int,
         @Query("season_id") seasonId: Int,
         @Query("age_group_id") ageGroupId: Int? = null,
-    ): List<RosterPlayer>
+    ): RosterResponse
 
     @POST("api/matches/{id}/live/goal")
     suspend fun postGoal(@Path("id") matchId: Int, @Body body: GoalRequest): JsonObject

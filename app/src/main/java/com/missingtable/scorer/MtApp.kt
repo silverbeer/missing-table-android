@@ -24,6 +24,15 @@ class AppContainer(app: Application) {
     private val client = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(tokenStore))
         .authenticator(TokenAuthenticator(BuildConfig.BASE_URL, tokenStore))
+        .apply {
+            if (BuildConfig.DEBUG) {
+                addInterceptor(
+                    okhttp3.logging.HttpLoggingInterceptor().apply {
+                        level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
+                    }
+                )
+            }
+        }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()

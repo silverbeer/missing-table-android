@@ -70,6 +70,11 @@ data class LiveMatchState(
 )
 
 @Serializable
+data class RosterResponse(
+    val roster: List<RosterPlayer> = emptyList(),
+)
+
+@Serializable
 data class RosterPlayer(
     val id: Int,
     @SerialName("team_id") val teamId: Int? = null,
