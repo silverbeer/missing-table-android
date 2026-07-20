@@ -124,6 +124,20 @@ data class SubstitutionRequest(
 )
 
 @Serializable
+data class BulkRosterPlayer(@SerialName("jersey_number") val jerseyNumber: Int)
+
+@Serializable
+data class BulkRosterRequest(
+    @SerialName("season_id") val seasonId: Int,
+    val players: List<BulkRosterPlayer>,
+)
+
+@Serializable
+data class BulkRosterResponse(
+    val created: List<RosterPlayer> = emptyList(),
+)
+
+@Serializable
 data class LineupPosition(
     @SerialName("player_id") val playerId: Int,
     val position: String,

@@ -46,6 +46,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
+import com.missingtable.scorer.data.api.BulkRosterPlayer
+import com.missingtable.scorer.data.api.BulkRosterRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.LineupPosition
 import com.missingtable.scorer.data.api.LineupSaveRequest
@@ -114,8 +116,37 @@ fun LineupScreen(
         loading = false
     }
 
+    // Placeholder players (entered by jersey number, no roster row yet) are
+    // held as negative ids: -jerseyNumber. On save they become real roster
+    // entries via the bulk endpoint, then the lineup references the new ids.
+    suspend fun materializePlaceholders(): Boolean {
+        val pendingNumbers = assignments.values.filter { it < 0 }.map { -it }.distinct()
+        if (pendingNumbers.isEmpty()) return true
+        if (seasonId == null) return false
+        val ok = runCatching {
+            container.api.bulkCreateRoster(
+                teamId,
+                BulkRosterRequest(seasonId, pendingNumbers.map { BulkRosterPlayer(it) }),
+            )
+            // Refetch: bulk skips numbers that already exist, so the roster is
+            // the one source of truth for number -> id
+            val fresh = container.api.roster(teamId, seasonId, null).roster
+            roster = fresh
+            val byNumber = fresh.associateBy { it.jerseyNumber }
+            assignments = assignments.mapValues { (_, id) ->
+                if (id < 0) byNumber[-id]?.id ?: id else id
+            }
+            assignments.values.none { it < 0 }
+        }.getOrDefault(false)
+        return ok
+    }
+
     fun save(showConfirmation: Boolean = true, then: (() -> Unit)? = null) {
         scope.launch {
+            if (!materializePlaceholders()) {
+                snackbar.showSnackbar("Couldn't create roster entries for entered numbers")
+                return@launch
+            }
             val positions = assignments.mapNotNull { (idx, playerId) ->
                 slots.getOrNull(idx)?.let { LineupPosition(playerId = playerId, position = it) }
             }
@@ -238,9 +269,12 @@ fun LineupScreen(
                                     modifier = Modifier.width(44.dp),
                                 )
                                 Text(
-                                    player?.let { p ->
-                                        listOfNotNull("#${p.jerseyNumber}", p.nameOnly).joinToString(" ")
-                                    } ?: "—",
+                                    when {
+                                        player != null ->
+                                            listOfNotNull("#${player.jerseyNumber}", player.nameOnly).joinToString(" ")
+                                        playerId != null && playerId < 0 -> "#${-playerId}"
+                                        else -> "—"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -313,6 +347,50 @@ fun LineupScreen(
             }
 
             Spacer(Modifier.height(8.dp))
+            // Number entry — works with or without a roster: an existing
+            // number assigns that player; an unknown number creates a roster
+            // entry when the lineup is saved.
+            var numberInput by remember { mutableStateOf("") }
+            fun assignNumber() {
+                val num = numberInput.toIntOrNull() ?: return
+                if (num !in 1..99) return
+                val existing = roster.find { it.jerseyNumber == num }
+                val id = existing?.id ?: -num
+                if (id in assignments.values) {
+                    numberInput = ""
+                    return
+                }
+                assignments = assignments + (selectedSlot to id)
+                selectedSlot = nextOpenSlot(selectedSlot + 1)
+                numberInput = ""
+                dirty = true
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = numberInput,
+                    onValueChange = { v -> numberInput = v.filter { it.isDigit() }.take(2) },
+                    label = { Text("Jersey # for ${slots.getOrNull(selectedSlot) ?: ""}") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onDone = { assignNumber() },
+                    ),
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = { assignNumber() },
+                    enabled = numberInput.isNotBlank(),
+                    modifier = Modifier.height(52.dp),
+                ) { Text("ASSIGN") }
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
                 "${assignments.size}/${slots.size} assigned",
                 style = MaterialTheme.typography.labelMedium,

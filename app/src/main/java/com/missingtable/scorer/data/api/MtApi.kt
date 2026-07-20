@@ -36,6 +36,12 @@ interface MtApi {
         @Query("age_group_id") ageGroupId: Int? = null,
     ): RosterResponse
 
+    @POST("api/teams/{teamId}/roster/bulk")
+    suspend fun bulkCreateRoster(
+        @Path("teamId") teamId: Int,
+        @Body body: BulkRosterRequest,
+    ): BulkRosterResponse
+
     @GET("api/matches/{id}/lineup/{teamId}")
     suspend fun getLineup(@Path("id") matchId: Int, @Path("teamId") teamId: Int): LineupResponse
 
