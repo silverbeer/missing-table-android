@@ -67,10 +67,13 @@ import com.missingtable.scorer.data.api.LineupPosition
 import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.domain.Formations
+import com.missingtable.scorer.domain.Positions
 import kotlinx.coroutines.launch
 
 private val PitchGreen = Color(0xFF2E7D46)
 private val PitchLine = Color(0xCCFFFFFF)
+private val FitGreen = Color(0xFF4CAF50)
+private val WarnAmber = Color(0xFFFBBF24)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -177,6 +180,32 @@ fun LineupScreen(
                 snackbar.showSnackbar("Failed to save lineup")
             }
         }
+    }
+
+    // SB-288+: one-tap "Auto-fill" — assign best-fit unassigned players to every
+    // OPEN slot (existing assignments kept). Slots fill in formation order
+    // (GK->DEF->MID->FWD), each taking the highest-fit remaining player; ties
+    // break on jersey number. Non-matching fills still complete the XI but show
+    // an amber marker for the user to fix.
+    fun autoFill() {
+        val pool = roster.filter { it.id !in assignments.values }.toMutableList()
+        if (pool.isEmpty()) return
+        val next = assignments.toMutableMap()
+        slots.forEachIndexed { idx, slot ->
+            if (next.containsKey(idx) || pool.isEmpty()) return@forEachIndexed
+            val group = Positions.SLOT_TO_GROUP[slot.code]
+            val best = pool.maxWithOrNull(
+                compareBy<RosterPlayer>(
+                    { Positions.fitScore(it.positions, group) },
+                    { -(it.jerseyNumber ?: 999) },
+                ),
+            ) ?: return@forEachIndexed
+            next[idx] = best.id
+            pool.remove(best)
+        }
+        assignments = next
+        selectedSlot = nextOpenSlot()
+        dirty = true
     }
 
     Scaffold(
@@ -288,6 +317,12 @@ fun LineupScreen(
                     val playerId = assignments[idx]
                     val player = roster.find { it.id == playerId }
                     val selected = idx == selectedSlot
+                    // Amber ring when the assigned player is out of position for
+                    // this slot's group (players with no positions set aren't flagged).
+                    val slotGroup = Positions.SLOT_TO_GROUP[slot.code]
+                    val outOfPos = player != null &&
+                        Positions.parse(player.positions).isNotEmpty() &&
+                        Positions.fitScore(player.positions, slotGroup) == 0
                     val markerSize = 46.dp
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -306,8 +341,8 @@ fun LineupScreen(
                                 else -> Color(0x66FFFFFF)
                             },
                             border = androidx.compose.foundation.BorderStroke(
-                                if (selected) 3.dp else 1.dp,
-                                Color.White,
+                                if (selected || outOfPos) 3.dp else 1.dp,
+                                if (outOfPos && !selected) WarnAmber else Color.White,
                             ),
                             modifier = Modifier.size(markerSize),
                         ) {
@@ -394,18 +429,41 @@ fun LineupScreen(
 
             // Roster grid (when a roster exists): tap assigns to the selected
             // marker; tapping an assigned (dark) player unassigns them.
+            // SB-288+: players whose position group matches the selected slot are
+            // sorted first (primary matches ahead of secondary) and green-ringed.
             if (roster.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
+                val slotCode = slots.getOrNull(selectedSlot)?.code
+                val slotGroup = Positions.SLOT_TO_GROUP[slotCode]
+                val gridPlayers = roster.sortedWith(
+                    compareByDescending<RosterPlayer> {
+                        Positions.fitScore(it.positions, slotGroup)
+                    }.thenBy { it.jerseyNumber ?: 999 },
+                )
+                val groupName = slotGroup?.let { Positions.GROUP_NAMES[it] }
+                Text(
+                    if (slotCode != null && groupName != null) {
+                        "Tap a player for $slotCode · ${groupName}s first"
+                    } else if (slotCode != null) {
+                        "Tap a player for $slotCode"
+                    } else {
+                        "Tap a player to assign"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Spacer(Modifier.height(4.dp))
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
+                    columns = GridCells.Fixed(4),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 200.dp),
+                        .heightIn(max = 260.dp),
                 ) {
-                    items(roster, key = { it.id }) { p ->
+                    items(gridPlayers, key = { it.id }) { p ->
                         val assigned = p.id in assignedIds
+                        val fits = slotGroup != null &&
+                            Positions.fitScore(p.positions, slotGroup) > 0
                         Surface(
                             onClick = {
                                 dirty = true
@@ -422,8 +480,18 @@ fun LineupScreen(
                             } else {
                                 MaterialTheme.colorScheme.primaryContainer
                             },
-                            modifier = Modifier.height(56.dp),
+                            border = if (fits && !assigned) {
+                                androidx.compose.foundation.BorderStroke(2.dp, FitGreen)
+                            } else {
+                                null
+                            },
+                            modifier = Modifier.height(64.dp),
                         ) {
+                            val onColor = if (assigned) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            }
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center,
@@ -433,11 +501,7 @@ fun LineupScreen(
                                     "${p.jerseyNumber ?: "?"}",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (assigned) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    },
+                                    color = onColor,
                                 )
                                 p.nameOnly?.let {
                                     Text(
@@ -445,11 +509,17 @@ fun LineupScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        color = if (assigned) {
-                                            MaterialTheme.colorScheme.onPrimary
-                                        } else {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        },
+                                        color = onColor,
+                                    )
+                                }
+                                val posText = Positions.parse(p.positions).joinToString(" ")
+                                if (posText.isNotEmpty()) {
+                                    Text(
+                                        posText,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (fits && !assigned) FitGreen else onColor,
                                     )
                                 }
                             }
@@ -459,10 +529,21 @@ fun LineupScreen(
             }
 
             Spacer(Modifier.height(8.dp))
-            Text(
-                "${assignments.size}/${slots.size} assigned",
-                style = MaterialTheme.typography.labelMedium,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "${assignments.size}/${slots.size} assigned",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(
+                    onClick = { autoFill() },
+                    enabled = roster.isNotEmpty() && assignments.size < slots.size,
+                ) { Text("Auto-fill") }
+            }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(

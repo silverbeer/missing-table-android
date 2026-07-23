@@ -82,6 +82,9 @@ data class RosterPlayer(
     @SerialName("display_name") val displayName: String? = null,
     @SerialName("first_name") val firstName: String? = null,
     @SerialName("last_name") val lastName: String? = null,
+    // Ordered player position codes; first = primary (SB-284 taxonomy). The
+    // backend roster endpoint returns players.positions (text[]).
+    val positions: List<String> = emptyList(),
 ) {
     val label: String
         get() = displayName ?: listOfNotNull(firstName, lastName).joinToString(" ").ifBlank { "#$jerseyNumber" }
