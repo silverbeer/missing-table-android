@@ -28,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -95,6 +97,8 @@ fun LineupScreen(
     // slot index -> player id (negative id = placeholder jersey number)
     var assignments by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedSlot by remember { mutableStateOf(0) }
+    // Slot whose on-pitch quick-pick menu is open (null = none).
+    var menuSlot by remember { mutableStateOf<Int?>(null) }
     var loading by remember { mutableStateOf(true) }
     var dirty by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -333,7 +337,7 @@ fun LineupScreen(
                             ),
                     ) {
                         Surface(
-                            onClick = { selectedSlot = idx },
+                            onClick = { selectedSlot = idx; menuSlot = idx },
                             shape = CircleShape,
                             color = when {
                                 selected -> MaterialTheme.colorScheme.tertiary
@@ -378,6 +382,96 @@ fun LineupScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                        }
+
+                        // Quick-pick: tap the marker to pick a player right here
+                        // instead of reaching for the grid below. Candidates are
+                        // fit-sorted for this slot (matches first, primary ahead).
+                        DropdownMenu(
+                            expanded = menuSlot == idx,
+                            onDismissRequest = { menuSlot = null },
+                        ) {
+                            if (playerId != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Clear ${slot.code}") },
+                                    onClick = {
+                                        assignments = assignments - idx
+                                        menuSlot = null
+                                        dirty = true
+                                    },
+                                )
+                            }
+                            val takenElsewhere = assignments
+                                .filterKeys { it != idx }.values.toSet()
+                            val available = roster.filter { it.id !in takenElsewhere }
+                            // Only players who play this slot's position group. Fall
+                            // back to everyone only when none fit (e.g. a roster with
+                            // no positions set) so the menu never dead-ends.
+                            val fitting = available.filter {
+                                slotGroup != null &&
+                                    Positions.fitScore(it.positions, slotGroup) > 0
+                            }
+                            val candidates = (if (fitting.isNotEmpty()) fitting else available)
+                                .sortedWith(
+                                    compareByDescending<RosterPlayer> {
+                                        Positions.fitScore(it.positions, slotGroup)
+                                    }.thenBy { it.jerseyNumber ?: 999 },
+                                )
+                            if (candidates.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("No players available") },
+                                    enabled = false,
+                                    onClick = {},
+                                )
+                            }
+                            candidates.forEach { p ->
+                                val fits = slotGroup != null &&
+                                    Positions.fitScore(p.positions, slotGroup) > 0
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Text(
+                                                "#${p.jerseyNumber ?: "?"}",
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (fits) {
+                                                    FitGreen
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                },
+                                            )
+                                            p.nameOnly?.let {
+                                                Text(
+                                                    it,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                            val pos = Positions.parse(p.positions)
+                                                .joinToString(" ")
+                                            if (pos.isNotEmpty()) {
+                                                Text(
+                                                    pos,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (fits) {
+                                                        FitGreen
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        assignments = assignments + (idx to p.id)
+                                        menuSlot = null
+                                        selectedSlot = nextOpenSlot(idx + 1)
+                                        dirty = true
+                                    },
+                                )
+                            }
                         }
                     }
                 }
