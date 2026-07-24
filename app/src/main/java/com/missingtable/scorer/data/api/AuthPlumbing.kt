@@ -57,8 +57,14 @@ class TokenAuthenticator(
             call.execute().use { r ->
                 if (!r.isSuccessful) return@runCatching null
                 val obj = json.parseToJsonElement(r.body!!.string()).jsonObject
-                val access = obj["access_token"]?.jsonPrimitive?.content ?: return@runCatching null
-                val newRefresh = obj["refresh_token"]?.jsonPrimitive?.content
+                // POST /api/auth/refresh nests the rotated tokens under "session"
+                // ({"success":true,"session":{"access_token":..,"refresh_token":..}}),
+                // unlike /login which returns them flat. Read session first, then
+                // fall back to the flat shape so both are handled.
+                val tokens = obj["session"]?.jsonObject ?: obj
+                val access = tokens["access_token"]?.jsonPrimitive?.content
+                    ?: return@runCatching null
+                val newRefresh = tokens["refresh_token"]?.jsonPrimitive?.content
                 tokenStore.saveBlocking(access, newRefresh)
                 access
             }
