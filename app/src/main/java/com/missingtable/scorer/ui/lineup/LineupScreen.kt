@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -42,6 +43,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -99,6 +101,8 @@ fun LineupScreen(
     var selectedSlot by remember { mutableStateOf(0) }
     // Slot whose on-pitch quick-pick menu is open (null = none).
     var menuSlot by remember { mutableStateOf<Int?>(null) }
+    // Jersey number typed into the open quick-pick menu (reset each open).
+    var menuJersey by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var dirty by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -337,7 +341,7 @@ fun LineupScreen(
                             ),
                     ) {
                         Surface(
-                            onClick = { selectedSlot = idx; menuSlot = idx },
+                            onClick = { selectedSlot = idx; menuSlot = idx; menuJersey = "" },
                             shape = CircleShape,
                             color = when {
                                 selected -> MaterialTheme.colorScheme.tertiary
@@ -391,6 +395,42 @@ fun LineupScreen(
                             expanded = menuSlot == idx,
                             onDismissRequest = { menuSlot = null },
                         ) {
+                            // Type a jersey number right here — works even with an
+                            // empty roster; unknown numbers become placeholders that
+                            // are materialized into roster rows on save.
+                            fun assignJersey() {
+                                val num = menuJersey.toIntOrNull() ?: return
+                                if (num !in 1..99) return
+                                val existing = roster.find { it.jerseyNumber == num }
+                                assignments = assignments + (idx to (existing?.id ?: -num))
+                                menuSlot = null
+                                selectedSlot = nextOpenSlot(idx + 1)
+                                dirty = true
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                OutlinedTextField(
+                                    value = menuJersey,
+                                    onValueChange = { v ->
+                                        menuJersey = v.filter { it.isDigit() }.take(2)
+                                    },
+                                    label = { Text("Jersey # for ${slot.code}") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done,
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = { assignJersey() }),
+                                    modifier = Modifier.width(140.dp),
+                                )
+                                TextButton(
+                                    onClick = { assignJersey() },
+                                    enabled = menuJersey.isNotBlank(),
+                                ) { Text("Add") }
+                            }
+
                             if (playerId != null) {
                                 DropdownMenuItem(
                                     text = { Text("Clear ${slot.code}") },
