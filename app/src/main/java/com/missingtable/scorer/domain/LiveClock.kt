@@ -15,6 +15,12 @@ object LiveClock {
     private fun parse(ts: String?): Instant? =
         ts?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
+    /** Elapsed seconds -> a running MM:SS clock (counts up past the half, soccer-style). */
+    private fun mmss(seconds: Long): String {
+        val s = seconds.coerceAtLeast(0)
+        return "%02d:%02d".format(s / 60, s % 60)
+    }
+
     fun derive(
         kickoffTime: String?,
         halftimeStart: String?,
@@ -28,23 +34,19 @@ object LiveClock {
 
         val secondHalf = parse(secondHalfStart)
         if (secondHalf != null) {
-            val elapsed = ((now.epochSecond - secondHalf.epochSecond) / 60).toInt() + 1
-            val total = halfDuration + elapsed
+            // Second half continues counting from halfDuration (e.g. 45:00).
+            val secs = (now.epochSecond - secondHalf.epochSecond) + halfDuration * 60L
+            val minute = (secs / 60).toInt()
             val fullTime = halfDuration * 2
-            return if (total > fullTime) {
-                ClockText("$fullTime+${total - fullTime}'", fullTime, total - fullTime)
-            } else {
-                ClockText("$total'", total, null)
-            }
+            val extra = if (minute > fullTime) minute - fullTime else null
+            return ClockText(mmss(secs), minute.coerceAtMost(fullTime), extra)
         }
 
         if (halftimeStart != null) return ClockText("HT", halfDuration, null)
 
-        val elapsed = ((now.epochSecond - kickoff.epochSecond) / 60).toInt() + 1
-        return if (elapsed > halfDuration) {
-            ClockText("$halfDuration+${elapsed - halfDuration}'", halfDuration, elapsed - halfDuration)
-        } else {
-            ClockText("$elapsed'", elapsed, null)
-        }
+        val secs = now.epochSecond - kickoff.epochSecond
+        val minute = (secs / 60).toInt()
+        val extra = if (minute > halfDuration) minute - halfDuration else null
+        return ClockText(mmss(secs), minute.coerceAtMost(halfDuration), extra)
     }
 }
