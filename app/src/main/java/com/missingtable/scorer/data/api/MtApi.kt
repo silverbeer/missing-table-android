@@ -131,6 +131,13 @@ interface MtApi {
     @DELETE("api/matches/{id}/post-match/card/{eventId}")
     suspend fun deletePostMatchCard(@Path("id") matchId: Int, @Path("eventId") eventId: Int): JsonObject
 
+    @retrofit2.http.PUT("api/matches/{id}/post-match/stats/{teamId}")
+    suspend fun putPostMatchStats(
+        @Path("id") matchId: Int,
+        @Path("teamId") teamId: Int,
+        @Body body: BatchPlayerStatsUpdate,
+    ): JsonObject
+
     // Despite the /admin/ path this is gated by match-management permission,
     // so team managers can correct scorer/assister/minute.
     @PATCH("api/admin/goals/{eventId}")

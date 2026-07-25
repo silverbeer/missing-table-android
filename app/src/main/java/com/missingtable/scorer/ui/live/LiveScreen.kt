@@ -550,7 +550,10 @@ fun LiveScreen(
                     },
                     onPick = { inn, _ ->
                         if (inn != null) {
-                            flow = ActionFlow.None
+                            // Multi-sub fast path (SB-282): chain straight back
+                            // to Player OFF for the same team — halftime swaps
+                            // are 3-4 subs in a row. Dismiss the sheet to stop.
+                            flow = ActionFlow.SubPickOut(currentFlow.teamId)
                             val tap = tapMinute()
                             act("Substitution recorded") {
                                 repo.enqueueSubstitution(

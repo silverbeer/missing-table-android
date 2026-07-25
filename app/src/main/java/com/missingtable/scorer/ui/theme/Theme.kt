@@ -13,12 +13,24 @@ private val Accent = Color(0xFFFFC107)
 
 private val DarkColors = darkColorScheme(
     primary = PitchLight,
+    onPrimary = Color.White,
+    // Player tiles / chips lean on primaryContainer — keep them pitch-green
+    // in the dark instead of Material's default muddy purple-grey.
+    primaryContainer = Color(0xFF1B4D3A),
+    onPrimaryContainer = Color(0xFFBDE5D2),
     secondary = Accent,
+    onSecondary = Color.Black,
     tertiary = Accent,
+    tertiaryContainer = Color(0xFF4D3F00),
+    onTertiaryContainer = Color(0xFFFFE08A),
+    background = Color(0xFF111412),
+    surface = Color(0xFF111412),
 )
 
 private val LightColors = lightColorScheme(
     primary = Pitch,
+    primaryContainer = Color(0xFFB8E5CE),
+    onPrimaryContainer = Pitch,
     secondary = PitchLight,
     tertiary = Accent,
 )

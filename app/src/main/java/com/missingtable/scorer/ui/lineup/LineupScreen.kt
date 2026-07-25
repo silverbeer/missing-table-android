@@ -194,6 +194,36 @@ fun LineupScreen(
         }
     }
 
+    // SB-280: one-tap "Copy last" — pull this team's most recent saved lineup
+    // from another match (checked newest-first) into the builder.
+    suspend fun copyLastLineup() {
+        val today = java.time.LocalDate.now()
+        val candidates = runCatching {
+            container.api.matches(
+                startDate = today.minusDays(120).toString(),
+                endDate = today.plusDays(1).toString(),
+            )
+        }.getOrDefault(emptyList())
+            .filter { it.id != matchId && (it.homeTeamId == teamId || it.awayTeamId == teamId) }
+            .sortedByDescending { it.matchDate }
+            .take(10)
+
+        for (m in candidates) {
+            val lineup = runCatching { container.api.getLineup(m.id, teamId) }.getOrNull() ?: continue
+            if (lineup.positions.isEmpty()) continue
+            val preset = Formations.presets[lineup.formationName] ?: continue
+            formation = lineup.formationName
+            val byPosition = lineup.positions.associateBy { it.position }
+            assignments = preset.withIndex().mapNotNull { (idx, slot) ->
+                byPosition[slot.code]?.let { idx to it.playerId }
+            }.toMap()
+            dirty = true
+            snackbar.showSnackbar("Copied lineup from ${m.matchDate}")
+            return
+        }
+        snackbar.showSnackbar("No previous lineup found")
+    }
+
     // SB-288+: one-tap "Auto-fill" — assign best-fit unassigned players to every
     // OPEN slot (existing assignments kept). Slots fill in formation order
     // (GK->DEF->MID->FWD), each taking the highest-fit remaining player; ties
@@ -677,6 +707,10 @@ fun LineupScreen(
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.weight(1f),
                 )
+                OutlinedButton(
+                    onClick = { scope.launch { copyLastLineup() } },
+                    enabled = roster.isNotEmpty(),
+                ) { Text("Copy last") }
                 OutlinedButton(
                     onClick = { autoFill() },
                     enabled = roster.isNotEmpty() && assignments.size < slots.size,

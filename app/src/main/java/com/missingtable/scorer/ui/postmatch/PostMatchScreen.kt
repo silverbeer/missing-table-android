@@ -55,13 +55,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
+import com.missingtable.scorer.data.api.BatchPlayerStatsUpdate
 import com.missingtable.scorer.data.api.GoalEventUpdateRequest
+import com.missingtable.scorer.data.api.PlayerStatEntry
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.PostMatchCardRequest
 import com.missingtable.scorer.data.api.PostMatchGoalRequest
 import com.missingtable.scorer.data.api.PostMatchSubRequest
 import com.missingtable.scorer.data.api.RosterPlayer
+import com.missingtable.scorer.domain.MinutesPlayed
 import kotlinx.coroutines.launch
 
 private sealed interface Sheet {
@@ -140,6 +143,42 @@ fun PostMatchScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        // SB-282: derive minutes played (+cards) from the
+                        // lineup + sub timeline and push to player stats.
+                        listOfNotNull(
+                            s?.homeTeamId?.let { it to s.homeTeamName },
+                            s?.awayTeamId?.let { it to s.awayTeamName },
+                        ).forEach { (teamId, teamName) ->
+                            DropdownMenuItem(text = { Text("Fill minutes: $teamName") }, onClick = {
+                                menuOpen = false
+                                act("Minutes filled for $teamName") {
+                                    val lineup = container.api.getLineup(matchId, teamId)
+                                    require(lineup.positions.isNotEmpty()) { "No saved lineup" }
+                                    val matchLength = (state?.halfDuration ?: 45) * 2
+                                    val derived = MinutesPlayed.derive(
+                                        starters = lineup.positions.map { it.playerId }.toSet(),
+                                        events = events,
+                                        teamId = teamId,
+                                        matchLength = matchLength,
+                                    )
+                                    container.api.putPostMatchStats(
+                                        matchId, teamId,
+                                        BatchPlayerStatsUpdate(
+                                            derived.map {
+                                                PlayerStatEntry(
+                                                    playerId = it.playerId,
+                                                    started = it.started,
+                                                    played = it.played,
+                                                    minutesPlayed = it.minutes,
+                                                    yellowCards = it.yellowCards,
+                                                    redCards = it.redCards,
+                                                )
+                                            }
+                                        ),
+                                    )
+                                }
+                            })
+                        }
                         DropdownMenuItem(text = { Text("Reopen match") }, onClick = {
                             menuOpen = false
                             confirmReopen = true
