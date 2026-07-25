@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +35,7 @@ import com.missingtable.scorer.ui.leaderboard.LeaderboardScreen
 import com.missingtable.scorer.ui.live.LiveScreen
 import com.missingtable.scorer.ui.login.LoginScreen
 import com.missingtable.scorer.ui.matches.MatchListScreen
+import com.missingtable.scorer.ui.profile.ProfileScreen
 import com.missingtable.scorer.ui.table.TableScreen
 import com.missingtable.scorer.ui.theme.MtTheme
 import kotlinx.coroutines.runBlocking
@@ -189,7 +191,9 @@ private fun AppNav(container: AppContainer, startDestination: String) {
     }
 }
 
-private enum class HomeTab(val label: String) { Matches("Matches"), Table("Table"), Leaders("Leaders") }
+private enum class HomeTab(val label: String) {
+    Matches("Matches"), Table("Table"), Leaders("Leaders"), Profile("Profile")
+}
 
 /** Bottom-nav shell (SB-318): Matches | Table | Leaders. More tabs land with SB-324/325. */
 @Composable
@@ -213,6 +217,7 @@ private fun HomeShell(
                                     HomeTab.Matches -> Icons.AutoMirrored.Filled.List
                                     HomeTab.Table -> Icons.Filled.TableChart
                                     HomeTab.Leaders -> Icons.Filled.EmojiEvents
+                                    HomeTab.Profile -> Icons.Filled.Person
                                 },
                                 contentDescription = t.label,
                             )
@@ -228,10 +233,10 @@ private fun HomeShell(
                 HomeTab.Matches -> MatchListScreen(
                     container = container,
                     onOpenMatch = onOpenMatch,
-                    onLogout = onLogout,
                 )
                 HomeTab.Table -> TableScreen(container)
                 HomeTab.Leaders -> LeaderboardScreen(container)
+                HomeTab.Profile -> ProfileScreen(container, onLogout = onLogout)
             }
         }
     }

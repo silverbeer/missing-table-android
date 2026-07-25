@@ -55,6 +55,9 @@ interface MtApi {
     @GET("api/android/apk-url")
     suspend fun apkUrl(): ApkUrlResponse
 
+    @GET("api/me/player-stats")
+    suspend fun myPlayerStats(@Query("season_id") seasonId: Int): PlayerStatsResponse
+
     @GET("api/teams/{teamId}/roster")
     suspend fun roster(
         @Path("teamId") teamId: Int,

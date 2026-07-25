@@ -266,6 +266,24 @@ data class GoalEventUpdateRequest(
 )
 
 @Serializable
+data class PlayerStatsResponse(
+    @SerialName("player_id") val playerId: Int? = null,
+    @SerialName("jersey_number") val jerseyNumber: Int? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    val stats: PlayerSeasonStats = PlayerSeasonStats(),
+    // False when the login has no linked roster player (managers, fans).
+    val linked: Boolean = false,
+)
+
+@Serializable
+data class PlayerSeasonStats(
+    @SerialName("games_played") val gamesPlayed: Int = 0,
+    @SerialName("games_started") val gamesStarted: Int = 0,
+    @SerialName("total_minutes") val totalMinutes: Int = 0,
+    @SerialName("total_goals") val totalGoals: Int = 0,
+)
+
+@Serializable
 data class ApkUrlResponse(
     @SerialName("download_url") val downloadUrl: String,
     // Null until the backend/release pipeline both carry SB-322.

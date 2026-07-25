@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,7 +41,6 @@ import kotlinx.coroutines.launch
 fun MatchListScreen(
     container: AppContainer,
     onOpenMatch: (MatchSummary) -> Unit,
-    onLogout: () -> Unit,
 ) {
     var matches by remember { mutableStateOf<List<MatchSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -94,9 +92,6 @@ fun MatchListScreen(
                 actions = {
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
-                    }
-                    IconButton(onClick = onLogout) {
-                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Log out")
                     }
                 },
             )
