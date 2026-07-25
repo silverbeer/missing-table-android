@@ -5,6 +5,11 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Release signing keystore path — set by CI (decoded from a base64 secret).
+// When absent (local dev), release builds fall back to the debug key so
+// assembleRelease still works without any secrets.
+val releaseKeystore: String? = System.getenv("ANDROID_KEYSTORE_FILE")
+
 android {
     namespace = "com.missingtable.scorer"
     compileSdk = 36
@@ -13,16 +18,33 @@ android {
         applicationId = "com.missingtable.scorer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
+        // CI passes the workflow run number so each build supersedes the last
+        // on-device; local builds stay at 1.
+        versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (releaseKeystore != null) {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sideloaded personal app: sign with the debug key so
-            // assembleRelease produces an installable APK without a keystore.
-            signingConfig = signingConfigs.getByName("debug")
+            // Sign with the real release keystore when CI provides it; otherwise
+            // fall back to the debug key so a local assembleRelease still builds.
+            signingConfig = if (releaseKeystore != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

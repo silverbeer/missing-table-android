@@ -1,0 +1,67 @@
+name: Android Release
+
+# Build a signed prod release APK and publish it to Cloudflare R2
+# (mt-android-releases) for sideload distribution. Fires on a version tag,
+# or manually via the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Build signed prod release APK
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # versionCode = run number so each build installs over the previous one.
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew --no-daemon assembleProdRelease
+
+      - name: Publish APK to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/prod/release/app-prod-release.apk"
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          ct="application/vnd.android.package-archive"
+          # Versioned history + stable "latest" key the web-UI button points at.
+          aws s3 cp "$apk" "s3://mt-android-releases/builds/${{ github.run_number }}.apk" \
+            --endpoint-url "$endpoint" --content-type "$ct"
+          aws s3 cp "$apk" "s3://mt-android-releases/latest/missingtable.apk" \
+            --endpoint-url "$endpoint" --content-type "$ct"
+          echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: missingtable-prod-release
+          path: app/build/outputs/apk/prod/release/app-prod-release.apk
+          if-no-files-found: error
