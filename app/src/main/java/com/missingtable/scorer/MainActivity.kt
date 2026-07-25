@@ -113,6 +113,9 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                                 "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
                             )
                         }
+                        // Completed matches open the post-match editor (SB-281).
+                        match.matchStatus == "completed" ->
+                            navController.navigate("postmatch/${match.id}?$common")
                         else -> navController.navigate("live/${match.id}?$common")
                     }
                 },
@@ -147,6 +150,24 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                         "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
                     ) {
                         popUpTo("matches")
+                    }
+                },
+            )
+        }
+        composable("postmatch/{matchId}?seasonId={seasonId}&ageGroupId={ageGroupId}") { entry ->
+            val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
+            val seasonId = entry.arguments?.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
+            val ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+            com.missingtable.scorer.ui.postmatch.PostMatchScreen(
+                container = container,
+                matchId = matchId,
+                seasonId = seasonId,
+                onBack = { navController.popBackStack() },
+                onReopen = {
+                    navController.navigate(
+                        "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
+                    ) {
+                        popUpTo("home")
                     }
                 },
             )

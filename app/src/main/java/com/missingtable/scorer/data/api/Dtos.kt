@@ -223,6 +223,48 @@ data class LeaderboardEntry(
 @Serializable
 data class SeasonDto(val id: Int, val name: String? = null)
 
+// ── Post-match editing (SB-281) ─────────────────────────────────────────────
+// match_minute is REQUIRED (1..130) on the post-match endpoints, unlike live.
+
+@Serializable
+data class PostMatchGoalRequest(
+    @SerialName("team_id") val teamId: Int,
+    @SerialName("player_id") val playerId: Int? = null,
+    @SerialName("player_name") val playerName: String? = null,
+    @SerialName("assist_player_id") val assistPlayerId: Int? = null,
+    @SerialName("match_minute") val matchMinute: Int,
+    @SerialName("extra_time") val extraTime: Int? = null,
+)
+
+@Serializable
+data class PostMatchSubRequest(
+    @SerialName("team_id") val teamId: Int,
+    @SerialName("player_in_id") val playerInId: Int,
+    @SerialName("player_out_id") val playerOutId: Int,
+    @SerialName("match_minute") val matchMinute: Int,
+    @SerialName("extra_time") val extraTime: Int? = null,
+)
+
+@Serializable
+data class PostMatchCardRequest(
+    @SerialName("team_id") val teamId: Int,
+    @SerialName("player_id") val playerId: Int? = null,
+    @SerialName("player_name") val playerName: String? = null,
+    @SerialName("card_type") val cardType: String,
+    @SerialName("match_minute") val matchMinute: Int,
+    @SerialName("extra_time") val extraTime: Int? = null,
+)
+
+/** PATCH /api/admin/goals/{event_id} — only non-null fields are applied. */
+@Serializable
+data class GoalEventUpdateRequest(
+    @SerialName("match_minute") val matchMinute: Int? = null,
+    @SerialName("extra_time") val extraTime: Int? = null,
+    @SerialName("player_id") val playerId: Int? = null,
+    @SerialName("player_name") val playerName: String? = null,
+    @SerialName("assist_player_id") val assistPlayerId: Int? = null,
+)
+
 @Serializable
 data class ApkUrlResponse(
     @SerialName("download_url") val downloadUrl: String,

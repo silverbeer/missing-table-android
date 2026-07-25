@@ -5,6 +5,7 @@ import retrofit2.http.Body
 // JsonObject stays for the live-action posts, whose bodies we never read.
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -94,4 +95,35 @@ interface MtApi {
 
     @DELETE("api/matches/{id}/live/events/{eventId}")
     suspend fun deleteEvent(@Path("id") matchId: Int, @Path("eventId") eventId: Int): JsonObject
+
+    // ── Post-match editing (SB-281) — completed matches only ─────────────────
+
+    @GET("api/matches/{id}/live/events")
+    suspend fun matchEvents(
+        @Path("id") matchId: Int,
+        @Query("limit") limit: Int = 100,
+    ): List<MatchEvent>
+
+    @POST("api/matches/{id}/post-match/goal")
+    suspend fun postMatchGoal(@Path("id") matchId: Int, @Body body: PostMatchGoalRequest): JsonObject
+
+    @DELETE("api/matches/{id}/post-match/goal/{eventId}")
+    suspend fun deletePostMatchGoal(@Path("id") matchId: Int, @Path("eventId") eventId: Int): JsonObject
+
+    @POST("api/matches/{id}/post-match/substitution")
+    suspend fun postMatchSubstitution(@Path("id") matchId: Int, @Body body: PostMatchSubRequest): JsonObject
+
+    @DELETE("api/matches/{id}/post-match/substitution/{eventId}")
+    suspend fun deletePostMatchSubstitution(@Path("id") matchId: Int, @Path("eventId") eventId: Int): JsonObject
+
+    @POST("api/matches/{id}/post-match/card")
+    suspend fun postMatchCard(@Path("id") matchId: Int, @Body body: PostMatchCardRequest): JsonObject
+
+    @DELETE("api/matches/{id}/post-match/card/{eventId}")
+    suspend fun deletePostMatchCard(@Path("id") matchId: Int, @Path("eventId") eventId: Int): JsonObject
+
+    // Despite the /admin/ path this is gated by match-management permission,
+    // so team managers can correct scorer/assister/minute.
+    @PATCH("api/admin/goals/{eventId}")
+    suspend fun patchGoalEvent(@Path("eventId") eventId: Int, @Body body: GoalEventUpdateRequest): JsonObject
 }
