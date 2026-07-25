@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
@@ -39,8 +40,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +53,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,10 +65,12 @@ import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
+import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.domain.LiveClock
+import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 private sealed interface ActionFlow {
     data object None : ActionFlow
@@ -85,7 +93,7 @@ fun LiveScreen(
     ageGroupId: Int?,
     onBack: () -> Unit,
 ) {
-    var state by remember { mutableStateOf<LiveMatchState?>(null) }
+    var serverState by remember { mutableStateOf<LiveMatchState?>(null) }
     var rosters by remember { mutableStateOf<Map<Int, List<RosterPlayer>>>(emptyMap()) }
     var starters by remember { mutableStateOf<Map<Int, Set<Int>>>(emptyMap()) }
     var flow by remember { mutableStateOf<ActionFlow>(ActionFlow.None) }
@@ -95,10 +103,18 @@ fun LiveScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val repo = container.liveRepo
+    val pending by repo.pendingForMatch(matchId).collectAsState(initial = emptyList())
+    val online by container.connectivity.online.collectAsState()
+
+    // What the UI renders: last server state with the outstanding queue folded
+    // in (scores, pending timeline entries, clock timestamps, hidden deletes).
+    val state = serverState?.let { OptimisticLive.merge(it, pending, container.json, rosters) }
+
     suspend fun refresh() {
         runCatching { container.api.liveState(matchId) }
-            .onSuccess { state = it }
-            .onFailure { snackbar.showSnackbar("Couldn't refresh match") }
+            .onSuccess { serverState = it }
+            .onFailure { if (online) snackbar.showSnackbar("Couldn't refresh match") }
     }
 
     // Initial load + 15s poll
@@ -108,6 +124,13 @@ fun LiveScreen(
             delay(15_000)
             refresh()
         }
+    }
+
+    // When the queue drains (actions reached the server), pull fresh truth so
+    // pending overlay rows are replaced by their server twins without a flicker
+    // window growing to the next poll.
+    LaunchedEffect(pending.size) {
+        if (serverState != null) refresh()
     }
 
     // Load rosters once both team ids are known. Fetch unfiltered by age
@@ -157,15 +180,23 @@ fun LiveScreen(
         }
     }
 
+    // Mutations land in the local queue (instant, works offline); the
+    // optimistic merge shows them immediately and SyncEngine ships them FIFO.
     fun act(label: String, block: suspend () -> Unit) {
         scope.launch {
             runCatching { block() }
-                .onSuccess {
-                    refresh()
-                    snackbar.showSnackbar(label)
-                }
+                .onSuccess { snackbar.showSnackbar(label) }
                 .onFailure { snackbar.showSnackbar("Failed: $label") }
         }
+    }
+
+    // Minute/extra_time captured at tap time so events synced later (offline
+    // scoring) keep the minute they actually happened at.
+    fun tapMinute(): LiveClock.ClockText {
+        val cur = state ?: return LiveClock.ClockText("—", null, null)
+        return LiveClock.derive(
+            cur.kickoffTime, cur.halftimeStart, cur.secondHalfStart, cur.matchEndTime, cur.halfDuration
+        )
     }
 
     val s = state
@@ -180,6 +211,22 @@ fun LiveScreen(
                     }
                 },
                 actions = {
+                    if (pending.isNotEmpty()) {
+                        Text(
+                            "${pending.size} pending",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    // Connectivity dot: green = online, grey = offline (queueing).
+                    Box(
+                        Modifier
+                            .padding(end = 8.dp)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (online) Color(0xFF2E7D32) else Color(0xFF9E9E9E)),
+                    )
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Clock actions")
                     }
@@ -190,22 +237,29 @@ fun LiveScreen(
                                 onClick = {
                                     menuOpen = false
                                     act("Match started") {
-                                        container.api.postClock(matchId, ClockRequest("start_first_half", dur))
+                                        repo.enqueueClock(
+                                            matchId,
+                                            ClockRequest("start_first_half", dur, Instant.now().toString()),
+                                        )
                                     }
                                 },
                             )
                         }
                         DropdownMenuItem(text = { Text("Halftime") }, onClick = {
                             menuOpen = false
-                            act("Halftime") { container.api.postClock(matchId, ClockRequest("start_halftime")) }
+                            act("Halftime") {
+                                repo.enqueueClock(matchId, ClockRequest("start_halftime", occurredAt = Instant.now().toString()))
+                            }
                         })
                         DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
                             menuOpen = false
-                            act("Back to 1st half") { container.api.postClock(matchId, ClockRequest("cancel_halftime")) }
+                            act("Back to 1st half") { repo.enqueueClock(matchId, ClockRequest("cancel_halftime")) }
                         })
                         DropdownMenuItem(text = { Text("Start 2nd half") }, onClick = {
                             menuOpen = false
-                            act("2nd half started") { container.api.postClock(matchId, ClockRequest("start_second_half")) }
+                            act("2nd half started") {
+                                repo.enqueueClock(matchId, ClockRequest("start_second_half", occurredAt = Instant.now().toString()))
+                            }
                         })
                         DropdownMenuItem(text = { Text("End match") }, onClick = {
                             menuOpen = false
@@ -213,7 +267,7 @@ fun LiveScreen(
                         })
                         DropdownMenuItem(text = { Text("Reopen match") }, onClick = {
                             menuOpen = false
-                            act("Match reopened") { container.api.reopenMatch(matchId) }
+                            act("Match reopened") { repo.enqueueReopen(matchId) }
                         })
                     }
                 },
@@ -240,6 +294,37 @@ fun LiveScreen(
                 .padding(padding)
                 .padding(horizontal = 12.dp),
         ) {
+            // A rejected (4xx) action pauses the whole queue — strict FIFO —
+            // so it must be resolved before anything else syncs.
+            val failedAction = pending.firstOrNull { it.status == PendingAction.Status.FAILED }
+            if (failedAction != null) {
+                Card(
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            "Sync blocked: ${failedAction.actionType} rejected" +
+                                (failedAction.lastError?.let { " ($it)" } ?: ""),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Row {
+                            TextButton(onClick = {
+                                scope.launch { repo.retryFailed(failedAction.id) }
+                            }) { Text("Retry") }
+                            TextButton(onClick = {
+                                scope.launch { repo.discardFailed(failedAction.id) }
+                            }) { Text("Discard") }
+                        }
+                    }
+                }
+            }
+
             // Scoreboard
             Row(
                 Modifier
@@ -312,6 +397,7 @@ fun LiveScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(s.recentEvents, key = { it.id }) { e ->
+                    val isPending = OptimisticLive.isPending(e)
                     Card {
                         Row(
                             Modifier
@@ -327,9 +413,26 @@ fun LiveScreen(
                                 style = MaterialTheme.typography.labelMedium,
                             )
                             Text(e.message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            if (isPending) {
+                                Icon(
+                                    Icons.Filled.CloudUpload,
+                                    contentDescription = "Waiting to sync",
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             if (e.eventType != "status_change") {
                                 IconButton(onClick = {
-                                    act("Event deleted") { container.api.deleteEvent(matchId, e.id) }
+                                    if (isPending) {
+                                        // Never synced — just drop the queued row.
+                                        act("Event deleted") {
+                                            repo.deletePendingRow(OptimisticLive.pendingRowId(e))
+                                        }
+                                    } else {
+                                        act("Event deleted") { repo.enqueueDeleteEvent(matchId, e.id) }
+                                    }
                                 }) {
                                     Icon(
                                         Icons.Filled.Delete,
@@ -353,7 +456,9 @@ fun LiveScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmEnd = false
-                    act("Full time") { container.api.postClock(matchId, ClockRequest("end_match")) }
+                    act("Full time") {
+                        repo.enqueueClock(matchId, ClockRequest("end_match", occurredAt = Instant.now().toString()))
+                    }
                 }) { Text("End match") }
             },
             dismissButton = { TextButton(onClick = { confirmEnd = false }) { Text("Cancel") } },
@@ -380,13 +485,16 @@ fun LiveScreen(
                     extraOption = "NO ASSIST",
                     onExtra = {
                         flow = ActionFlow.None
+                        val tap = tapMinute()
                         act("Goal recorded") {
-                            container.api.postGoal(
+                            repo.enqueueGoal(
                                 matchId,
                                 GoalRequest(
                                     teamId = currentFlow.teamId,
                                     playerId = currentFlow.scorer?.id,
                                     playerName = currentFlow.scorerName,
+                                    matchMinute = tap.minute,
+                                    extraTime = tap.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )
@@ -394,14 +502,17 @@ fun LiveScreen(
                     },
                     onPick = { assist, _ ->
                         flow = ActionFlow.None
+                        val tap = tapMinute()
                         act("Goal recorded") {
-                            container.api.postGoal(
+                            repo.enqueueGoal(
                                 matchId,
                                 GoalRequest(
                                     teamId = currentFlow.teamId,
                                     playerId = currentFlow.scorer?.id,
                                     playerName = currentFlow.scorerName,
                                     assistPlayerId = assist?.id,
+                                    matchMinute = tap.minute,
+                                    extraTime = tap.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )
@@ -434,13 +545,16 @@ fun LiveScreen(
                     onPick = { inn, _ ->
                         if (inn != null) {
                             flow = ActionFlow.None
+                            val tap = tapMinute()
                             act("Substitution recorded") {
-                                container.api.postSubstitution(
+                                repo.enqueueSubstitution(
                                     matchId,
                                     SubstitutionRequest(
                                         teamId = currentFlow.teamId,
                                         playerInId = inn.id,
                                         playerOutId = currentFlow.out.id,
+                                        matchMinute = tap.minute,
+                                        extraTime = tap.extraTime,
                                         clientEventId = UUID.randomUUID().toString(),
                                     ),
                                 )
@@ -477,14 +591,17 @@ fun LiveScreen(
                     allowFreeText = true,
                     onPick = { player, freeText ->
                         flow = ActionFlow.None
+                        val tap = tapMinute()
                         act("Card recorded") {
-                            container.api.postCard(
+                            repo.enqueueCard(
                                 matchId,
                                 CardRequest(
                                     teamId = currentFlow.teamId,
                                     playerId = player?.id,
                                     playerName = freeText,
                                     cardType = currentFlow.cardType,
+                                    matchMinute = tap.minute,
+                                    extraTime = tap.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )

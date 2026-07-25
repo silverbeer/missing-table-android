@@ -178,8 +178,12 @@ fun LineupScreen(
             val positions = assignments.mapNotNull { (idx, playerId) ->
                 slots.getOrNull(idx)?.let { LineupPosition(playerId = playerId, position = it.code) }
             }
+            // Queued, not direct — works offline (placeholder materialization
+            // above still needs network, but a roster-only lineup queues fine).
             runCatching {
-                container.api.putLineup(matchId, teamId, LineupSaveRequest(formation, positions))
+                container.liveRepo.enqueueLineupSave(
+                    matchId, teamId, LineupSaveRequest(formation, positions)
+                )
             }.onSuccess {
                 dirty = false
                 if (showConfirmation) snackbar.showSnackbar("Lineup saved")
@@ -691,9 +695,13 @@ fun LineupScreen(
                         save(showConfirmation = false) {
                             scope.launch {
                                 runCatching {
-                                    container.api.postClock(
+                                    container.liveRepo.enqueueClock(
                                         matchId,
-                                        ClockRequest("start_first_half", halfDuration = null),
+                                        ClockRequest(
+                                            "start_first_half",
+                                            halfDuration = null,
+                                            occurredAt = java.time.Instant.now().toString(),
+                                        ),
                                     )
                                 }.onSuccess { onStartMatch() }
                                     .onFailure { snackbar.showSnackbar("Failed to start match") }
