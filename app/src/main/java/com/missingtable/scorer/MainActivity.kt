@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -42,6 +43,23 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppNav(container: AppContainer, startDestination: String) {
     val navController: NavHostController = rememberNavController()
+
+    // Session-expiry watchdog: TokenAuthenticator clears the store when the
+    // refresh token is rejected (401). Token going non-null -> null while the
+    // app is running means the session died out from under us — drop to login.
+    LaunchedEffect(Unit) {
+        var hadToken = false
+        container.tokenStore.accessTokenFlow.collect { token ->
+            if (token != null) {
+                hadToken = true
+            } else if (hadToken) {
+                hadToken = false
+                if (navController.currentDestination?.route != "login") {
+                    navController.navigate("login") { popUpTo(0) { inclusive = true } }
+                }
+            }
+        }
+    }
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable("login") {
