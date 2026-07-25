@@ -35,20 +35,27 @@ secrets** that wire them in.
 
 ---
 
-## 🔑 What goes in 1Password, and when
+## 🔑 One 1Password item is the source of truth
 
-Create **one 1Password item** — title **"Missing Table — Android release"** — and
-add to it as you go:
+Everything lives in **one** 1Password item; a script reads it and sets all the
+GitHub secrets (no manual copy/paste = nothing can drift out of sync).
 
-| Add after | Item content | Why it matters |
-|-----------|-------------|----------------|
-| Step 1 | the **`missingtable-release.jks` file** (attachment) | lose it → can never ship an update that installs over the app |
-| Step 1 | field **`keystore password`** | needed to sign; unrecoverable if lost |
-| Step 1 | field **`key alias`** = `missingtable` | needed to sign |
-| Step 2 | fields **`R2 access key id`** + **`R2 secret access key`** | CI upload creds; re-mintable, but keep them |
+Create the item now — **title `mt-android-release`**, vault `Personal` — and add
+these fields **with these exact labels** (fill values in Steps 1–2):
 
-Everything else (GitHub secrets) is derived from these — GitHub stores them
-encrypted; 1Password is your source of truth.
+| Field label (exact) | Value | Filled after |
+|---------------------|-------|--------------|
+| `keystore_base64` | base64 of the release `.jks` — `base64 -i file \| pbcopy`, then paste | Step 1 |
+| `keystore_password` | the keytool password (store == key, PKCS12) | Step 1 |
+| `r2_account_id` | `d0fa41d94a522719ef5b94eb9e6f4bdd` | Step 2 |
+| `r2_access_key_id` | CI R2 token access key id | Step 2 |
+| `r2_secret_access_key` | CI R2 token secret | Step 2 |
+
+Optional (belt-and-suspenders): also **attach the raw `.jks` file** to the same
+item, so you have the original even if you ever need to re-encode it.
+
+> The label names matter — the script reads `op://Personal/mt-android-release/<label>`.
+> If your vault isn't `Personal`, pass `OP_VAULT=...` to the script.
 
 ---
 
@@ -92,7 +99,7 @@ Prompts — **only the password matters**; the rest is cosmetic cert metadata:
 
 | Prompt | What to enter |
 |--------|---------------|
-| Enter keystore password | **invent a strong password** — you'll reuse it below (PKCS12 = one password for store + key) |
+| Enter keystore password | **invent a strong password** — this ONE password is used everywhere (PKCS12 = one password for store + key; it becomes both `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD`) |
 | Re-enter new password | same |
 | First and last name (CN) | anything, e.g. `Missing Table` |
 | Organizational unit (OU) | e.g. `Missing Table` (or Enter) |
@@ -102,20 +109,19 @@ Prompts — **only the password matters**; the rest is cosmetic cert metadata:
 
 Result: `~/secrets/missingtable-release.jks`. **Keep it out of any git repo.**
 
-### 1b. 🔒 Store in 1Password (do this now)
+### 1b. 🔒 Put the keystore into the 1Password item (do this now)
 
-**GUI:** 1Password → New Item → drag `~/secrets/missingtable-release.jks` in →
-title it **"Missing Table — Android release"** → add fields `keystore password`
-and `key alias` = `missingtable`.
+In the `mt-android-release` item (create it if you haven't):
 
-**CLI:**
-```bash
-eval $(op signin)
-op vault list        # find your vault name (usually "Personal")
-op document create ~/secrets/missingtable-release.jks \
-  --title "Missing Table — Android release keystore" --vault "Personal"
-# add the password in the GUI (don't type secrets on the CLI — they hit shell history)
-```
+1. Encode the keystore and copy it:
+   ```bash
+   base64 -i ~/secrets/missingtable-release.jks | pbcopy
+   ```
+2. Paste the clipboard into the **`keystore_base64`** field.
+3. Type your keytool password into the **`keystore_password`** field.
+4. (Optional) also attach the raw `~/secrets/missingtable-release.jks` file to the item.
+
+Don't type these on the CLI (shell history) — paste/type them in the 1Password app.
 
 ---
 
@@ -130,51 +136,51 @@ scoped to just the releases bucket — **not** the account-wide provider token.
 4. TTL: Forever → **Create**.
 5. Copy the **Access Key ID** and **Secret Access Key** (shown once).
 
-### 🔒 Store in 1Password (do this now)
+### 🔒 Add to the 1Password item (do this now)
 
-Add to the same item: fields `R2 access key id` and `R2 secret access key`.
+Fill in the remaining fields on `mt-android-release`:
+- **`r2_account_id`** = `d0fa41d94a522719ef5b94eb9e6f4bdd`
+- **`r2_access_key_id`** = the token's Access Key ID
+- **`r2_secret_access_key`** = the token's Secret Access Key
+
+At this point the item has all 5 fields. That's the whole source of truth.
 
 ---
 
-## Step 3 — GitHub repository secrets
+## Step 3 — Push the secrets to GitHub (one script)
 
-CI reads these at build time. Run from this repo (or add
-`--repo silverbeer/missing-table-android`):
+The script reads the 1Password item and sets all 7 GitHub secrets — same
+password into both keystore secrets, keystore base64'd, no manual paste:
 
 ```bash
 cd ~/gitrepos/missing-table-android
+./scripts/set-release-secrets.sh
+```
 
-# non-secret values
-gh secret set ANDROID_KEY_ALIAS -b "missingtable"
-gh secret set R2_ACCOUNT_ID     -b "d0fa41d94a522719ef5b94eb9e6f4bdd"
+It signs you into 1Password if needed, then prints a `✓` per secret. Re-run it
+any time a value changes (e.g. after rotating the R2 token) — it's idempotent.
 
-# the keystore, base64'd and piped straight in (never printed)
-base64 -i ~/secrets/missingtable-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
-
-# secret values — run each, paste when prompted (hidden, not saved to history)
-gh secret set ANDROID_KEYSTORE_PASSWORD      # your Step-1 password
-gh secret set ANDROID_KEY_PASSWORD           # same value (PKCS12)
-gh secret set R2_ACCESS_KEY_ID               # from Step 2
-gh secret set R2_SECRET_ACCESS_KEY           # from Step 2
+Overrides if your setup differs:
+```bash
+OP_VAULT="Work" OP_ITEM="mt-android-release" ./scripts/set-release-secrets.sh
 ```
 
 Verify (names only, values never shown):
-
 ```bash
 gh secret list
 ```
 
-The 7 required:
+The 7 it sets, all from the one item:
 
-| Secret | Source |
-|--------|--------|
-| `ANDROID_KEYSTORE_BASE64` | base64 of the `.jks` |
-| `ANDROID_KEYSTORE_PASSWORD` | Step 1 password |
-| `ANDROID_KEY_ALIAS` | `missingtable` |
-| `ANDROID_KEY_PASSWORD` | Step 1 password (same) |
-| `R2_ACCOUNT_ID` | `d0fa41d94a522719ef5b94eb9e6f4bdd` |
-| `R2_ACCESS_KEY_ID` | Step 2 token |
-| `R2_SECRET_ACCESS_KEY` | Step 2 token |
+| Secret | From 1Password field |
+|--------|----------------------|
+| `ANDROID_KEYSTORE_BASE64` | `keystore_base64` |
+| `ANDROID_KEYSTORE_PASSWORD` | `keystore_password` |
+| `ANDROID_KEY_PASSWORD` | `keystore_password` (same — PKCS12) |
+| `ANDROID_KEY_ALIAS` | `missingtable` (constant) |
+| `R2_ACCOUNT_ID` | `r2_account_id` |
+| `R2_ACCESS_KEY_ID` | `r2_access_key_id` |
+| `R2_SECRET_ACCESS_KEY` | `r2_secret_access_key` |
 
 ---
 
@@ -229,8 +235,9 @@ upgrades in place).
 
 ### Rotating
 
-- **R2 upload token:** mint a new one (Step 2), update the two GitHub secrets,
-  revoke the old token. No rebuild needed.
+- **R2 upload token:** mint a new one (Step 2), update `r2_access_key_id` /
+  `r2_secret_access_key` in the 1Password item, re-run
+  `./scripts/set-release-secrets.sh`, revoke the old token. No rebuild needed.
 - **Keystore:** effectively un-rotatable for an installed app — a new key means
   users must uninstall/reinstall. Treat the Step-1 keystore as permanent; that's
   why it lives in 1Password.
