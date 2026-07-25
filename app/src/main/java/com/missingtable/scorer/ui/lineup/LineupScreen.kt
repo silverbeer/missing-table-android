@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -40,6 +43,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -95,6 +99,10 @@ fun LineupScreen(
     // slot index -> player id (negative id = placeholder jersey number)
     var assignments by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedSlot by remember { mutableStateOf(0) }
+    // Slot whose on-pitch quick-pick menu is open (null = none).
+    var menuSlot by remember { mutableStateOf<Int?>(null) }
+    // Jersey number typed into the open quick-pick menu (reset each open).
+    var menuJersey by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var dirty by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -333,7 +341,7 @@ fun LineupScreen(
                             ),
                     ) {
                         Surface(
-                            onClick = { selectedSlot = idx },
+                            onClick = { selectedSlot = idx; menuSlot = idx; menuJersey = "" },
                             shape = CircleShape,
                             color = when {
                                 selected -> MaterialTheme.colorScheme.tertiary
@@ -378,6 +386,132 @@ fun LineupScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                        }
+
+                        // Quick-pick: tap the marker to pick a player right here
+                        // instead of reaching for the grid below. Candidates are
+                        // fit-sorted for this slot (matches first, primary ahead).
+                        DropdownMenu(
+                            expanded = menuSlot == idx,
+                            onDismissRequest = { menuSlot = null },
+                        ) {
+                            // Type a jersey number right here — works even with an
+                            // empty roster; unknown numbers become placeholders that
+                            // are materialized into roster rows on save.
+                            fun assignJersey() {
+                                val num = menuJersey.toIntOrNull() ?: return
+                                if (num !in 1..99) return
+                                val existing = roster.find { it.jerseyNumber == num }
+                                assignments = assignments + (idx to (existing?.id ?: -num))
+                                menuSlot = null
+                                selectedSlot = nextOpenSlot(idx + 1)
+                                dirty = true
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                OutlinedTextField(
+                                    value = menuJersey,
+                                    onValueChange = { v ->
+                                        menuJersey = v.filter { it.isDigit() }.take(2)
+                                    },
+                                    label = { Text("Jersey # for ${slot.code}") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done,
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = { assignJersey() }),
+                                    modifier = Modifier.width(140.dp),
+                                )
+                                TextButton(
+                                    onClick = { assignJersey() },
+                                    enabled = menuJersey.isNotBlank(),
+                                ) { Text("Add") }
+                            }
+
+                            if (playerId != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Clear ${slot.code}") },
+                                    onClick = {
+                                        assignments = assignments - idx
+                                        menuSlot = null
+                                        dirty = true
+                                    },
+                                )
+                            }
+                            val takenElsewhere = assignments
+                                .filterKeys { it != idx }.values.toSet()
+                            val available = roster.filter { it.id !in takenElsewhere }
+                            // Only players who play this slot's position group. Fall
+                            // back to everyone only when none fit (e.g. a roster with
+                            // no positions set) so the menu never dead-ends.
+                            val fitting = available.filter {
+                                slotGroup != null &&
+                                    Positions.fitScore(it.positions, slotGroup) > 0
+                            }
+                            val candidates = (if (fitting.isNotEmpty()) fitting else available)
+                                .sortedWith(
+                                    compareByDescending<RosterPlayer> {
+                                        Positions.fitScore(it.positions, slotGroup)
+                                    }.thenBy { it.jerseyNumber ?: 999 },
+                                )
+                            if (candidates.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("No players available") },
+                                    enabled = false,
+                                    onClick = {},
+                                )
+                            }
+                            candidates.forEach { p ->
+                                val fits = slotGroup != null &&
+                                    Positions.fitScore(p.positions, slotGroup) > 0
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Text(
+                                                "#${p.jerseyNumber ?: "?"}",
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (fits) {
+                                                    FitGreen
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                },
+                                            )
+                                            p.nameOnly?.let {
+                                                Text(
+                                                    it,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                            val pos = Positions.parse(p.positions)
+                                                .joinToString(" ")
+                                            if (pos.isNotEmpty()) {
+                                                Text(
+                                                    pos,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (fits) {
+                                                        FitGreen
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        assignments = assignments + (idx to p.id)
+                                        menuSlot = null
+                                        selectedSlot = nextOpenSlot(idx + 1)
+                                        dirty = true
+                                    },
+                                )
+                            }
                         }
                     }
                 }

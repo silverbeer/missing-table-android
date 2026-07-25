@@ -51,12 +51,14 @@ object Positions {
         "CB" to "DEF", "LCB" to "DEF", "RCB" to "DEF",
         "LB" to "DEF", "RB" to "DEF", "LWB" to "DEF", "RWB" to "DEF",
         // midfield
-        "CDM" to "MID", "LDM" to "MID", "RDM" to "MID",
+        "CDM" to "MID", "LCDM" to "MID", "RCDM" to "MID",
+        "LDM" to "MID", "RDM" to "MID",
         "CM" to "MID", "LCM" to "MID", "RCM" to "MID",
         "CAM" to "MID", "LAM" to "MID", "RAM" to "MID",
         "LM" to "MID", "RM" to "MID",
         // attack
         "LW" to "FWD", "RW" to "FWD", "ST" to "FWD",
+        "LST" to "FWD", "RST" to "FWD",
         "LS" to "FWD", "RS" to "FWD", "CF" to "FWD",
     )
 
