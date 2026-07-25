@@ -75,6 +75,7 @@ fun LoginScreen(container: AppContainer, onLoggedIn: () -> Unit) {
                         val resp = container.api.login(LoginRequest(username.trim(), password))
                         val access = resp.accessToken ?: error("No token in response")
                         container.tokenStore.save(access, resp.refreshToken, username.trim())
+                        container.refreshSession()
                     }.onSuccess {
                         loading = false
                         onLoggedIn()

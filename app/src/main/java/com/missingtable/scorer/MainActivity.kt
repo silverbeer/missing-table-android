@@ -44,6 +44,11 @@ class MainActivity : ComponentActivity() {
 private fun AppNav(container: AppContainer, startDestination: String) {
     val navController: NavHostController = rememberNavController()
 
+    // Refresh cached role/team/club on cold start (SB-317) — best-effort.
+    LaunchedEffect(Unit) {
+        if (container.tokenStore.accessToken() != null) container.refreshSession()
+    }
+
     // Session-expiry watchdog: TokenAuthenticator clears the store when the
     // refresh token is rejected (401). Token going non-null -> null while the
     // app is running means the session died out from under us — drop to login.

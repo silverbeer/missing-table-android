@@ -2,6 +2,7 @@ package com.missingtable.scorer.data.api
 
 import kotlinx.serialization.json.JsonObject
 import retrofit2.http.Body
+// JsonObject stays for the live-action posts, whose bodies we never read.
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -17,7 +18,7 @@ interface MtApi {
     suspend fun refresh(@Body body: RefreshRequest): AuthResponse
 
     @GET("api/auth/me")
-    suspend fun me(): JsonObject
+    suspend fun me(): MeResponse
 
     @GET("api/matches")
     suspend fun matches(
