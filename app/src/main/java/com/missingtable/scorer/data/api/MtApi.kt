@@ -30,6 +30,27 @@ interface MtApi {
     @GET("api/matches/{id}/live")
     suspend fun liveState(@Path("id") matchId: Int): LiveMatchState
 
+    @GET("api/table")
+    suspend fun table(
+        @Query("season_id") seasonId: Int? = null,
+        @Query("age_group_id") ageGroupId: Int? = null,
+        @Query("division_id") divisionId: Int? = null,
+        @Query("match_type") matchType: String? = null,
+    ): TableResponse
+
+    @GET("api/leaderboards/goals")
+    suspend fun goalsLeaderboard(
+        @Query("season_id") seasonId: Int,
+        @Query("age_group_id") ageGroupId: Int? = null,
+        @Query("limit") limit: Int = 50,
+    ): List<LeaderboardEntry>
+
+    @GET("api/current-season")
+    suspend fun currentSeason(): SeasonDto
+
+    @GET("api/age-groups")
+    suspend fun ageGroups(): List<AgeGroupDto>
+
     @GET("api/teams/{teamId}/roster")
     suspend fun roster(
         @Path("teamId") teamId: Int,
