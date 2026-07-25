@@ -14,21 +14,27 @@ is done, releasing is just pushing a git tag.
 ```
 git tag v0.1.1 ──▶ GitHub Actions (android-release.yml)
                      ├─ build signed prod APK (release keystore)
-                     └─ upload to Cloudflare R2 bucket "mt-android-releases"
+                     └─ upload to PRIVATE R2 bucket "mt-android-releases"
                           ├─ builds/<run>.apk   (history)
                           └─ latest/missingtable.apk   (stable)
-                                    │  (public r2.dev URL)
-   MT web-UI footer "Install the Android app" ──┘
-        https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk
+                                    │
+   logged-in user taps "Install the Android app" (missingtable.com)
+                                    │
+   MT backend  GET /api/android/apk-url  ──▶ short-lived presigned URL ──▶ download
 ```
+
+MT is **invite-only**, so the bucket is **private** — the APK is never
+anonymously downloadable. The footer button shows only to authenticated users
+and fetches a 5-minute presigned URL from the backend.
 
 Already in place (no action needed):
 
 | Thing | Where | Status |
 |-------|-------|--------|
-| R2 bucket `mt-android-releases` + public URL | Terraform: `missingtable-platform-bootstrap` → `clouds/cloudflare/global/r2` (SB-313) | ✅ applied |
+| Private R2 bucket `mt-android-releases` | Terraform: `missingtable-platform-bootstrap` → `clouds/cloudflare/global/r2` (SB-313) | ✅ applied |
+| Auth-gated download `GET /api/android/apk-url` | `missing-table` → `backend/app.py` + `r2_client.py` | ✅ (PR) |
 | Release workflow | this repo → `.github/workflows/android-release.yml` | ✅ in repo |
-| Web-UI install button | `missing-table` → `frontend/src/components/VersionFooter.vue` | ✅ (PR) |
+| Web-UI install button (logged-in only) | `missing-table` → `frontend/src/components/VersionFooter.vue` | ✅ (PR) |
 
 You provide: the **signing keystore**, a **CI R2 token**, and the **GitHub
 secrets** that wire them in.
@@ -202,19 +208,15 @@ Manual run without a tag: **Actions → Android Release → Run workflow**.
 
 ## Step 5 — Install on a phone
 
-On success the APK is live at:
+The bucket is private — there's no public link. Install through the app:
 
-```
-https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk
-```
+1. On the phone, open **missingtable.com** and **log in** (invite-only).
+2. In the footer, tap **📱 Install the Android app**. The backend returns a
+   short-lived presigned URL and the browser downloads the `.apk`.
+3. Tap the download → Android asks to **allow installs from unknown sources** →
+   allow → Install.
 
-That's exactly what the MT web-UI footer button links to. On the phone:
-
-1. Open the link (or tap **Install the Android app** on missingtable.com).
-2. Chrome downloads the `.apk`.
-3. Tap it → Android asks to **allow installs from unknown sources** → allow → Install.
-
-Updates: push a new tag, then re-download/re-install (same signature, so it
+Updates: push a new tag, then re-download from the footer (same signature, so it
 upgrades in place).
 
 ---
@@ -242,9 +244,11 @@ upgrades in place).
   users must uninstall/reinstall. Treat the Step-1 keystore as permanent; that's
   why it lives in 1Password.
 
-### Branded download URL (later)
+### Why private (not a public link)
 
-The public URL is Cloudflare's `r2.dev` domain. To serve it from
-`downloads.missingtable.com`, the `missingtable.com` DNS zone must move to
-Cloudflare, then bind an R2 custom domain (bootstrap repo). Until then the
-`r2.dev` URL is fine and the web-UI button hides it behind a click.
+MT is invite-only. A public `r2.dev` URL would be anonymously downloadable and,
+being hardcoded, would leak in the web bundle — so the bucket is private and the
+backend mints a short-lived (5-min) presigned URL only for authenticated users
+(`GET /api/android/apk-url`). The managed `r2.dev` domain is kept disabled in the
+bootstrap TF. If you ever want a branded, still-authenticated flow you'd proxy
+through the backend rather than expose a custom R2 domain.

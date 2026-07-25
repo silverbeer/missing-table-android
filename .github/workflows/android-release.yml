@@ -57,7 +57,8 @@ jobs:
             --endpoint-url "$endpoint" --content-type "$ct"
           aws s3 cp "$apk" "s3://mt-android-releases/latest/missingtable.apk" \
             --endpoint-url "$endpoint" --content-type "$ct"
-          echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
+          echo "Published to private bucket s3://mt-android-releases/latest/missingtable.apk"
+          echo "Install via missingtable.com (logged in) -> GET /api/android/apk-url"
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
