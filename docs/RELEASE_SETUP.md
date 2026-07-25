@@ -92,7 +92,7 @@ Prompts — **only the password matters**; the rest is cosmetic cert metadata:
 
 | Prompt | What to enter |
 |--------|---------------|
-| Enter keystore password | **invent a strong password** — you'll reuse it below (PKCS12 = one password for store + key) |
+| Enter keystore password | **invent a strong password** — this ONE password is used everywhere (PKCS12 = one password for store + key; it becomes both `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD`) |
 | Re-enter new password | same |
 | First and last name (CN) | anything, e.g. `Missing Table` |
 | Organizational unit (OU) | e.g. `Missing Table` (or Enter) |
@@ -152,11 +152,17 @@ gh secret set R2_ACCOUNT_ID     -b "d0fa41d94a522719ef5b94eb9e6f4bdd"
 base64 -i ~/secrets/missingtable-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
 
 # secret values — run each, paste when prompted (hidden, not saved to history)
-gh secret set ANDROID_KEYSTORE_PASSWORD      # your Step-1 password
-gh secret set ANDROID_KEY_PASSWORD           # same value (PKCS12)
+gh secret set ANDROID_KEYSTORE_PASSWORD      # paste your Step-1 keystore password
+gh secret set ANDROID_KEY_PASSWORD           # paste the SAME password again (see note)
 gh secret set R2_ACCESS_KEY_ID               # from Step 2
 gh secret set R2_SECRET_ACCESS_KEY           # from Step 2
 ```
+
+> **`ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` are the same value** —
+> the single password you set at keytool's "Enter keystore password". A keystore
+> has a *store* password (unlocks the file) and a *key* password (unlocks the
+> `missingtable` key), but **PKCS12 uses one password for both**, so you paste the
+> same Step-1 password into both secrets.
 
 Verify (names only, values never shown):
 
@@ -171,7 +177,7 @@ The 7 required:
 | `ANDROID_KEYSTORE_BASE64` | base64 of the `.jks` |
 | `ANDROID_KEYSTORE_PASSWORD` | Step 1 password |
 | `ANDROID_KEY_ALIAS` | `missingtable` |
-| `ANDROID_KEY_PASSWORD` | Step 1 password (same) |
+| `ANDROID_KEY_PASSWORD` | **same value** as `ANDROID_KEYSTORE_PASSWORD` (PKCS12) |
 | `R2_ACCOUNT_ID` | `d0fa41d94a522719ef5b94eb9e6f4bdd` |
 | `R2_ACCESS_KEY_ID` | Step 2 token |
 | `R2_SECRET_ACCESS_KEY` | Step 2 token |
