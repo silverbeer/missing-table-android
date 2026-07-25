@@ -184,6 +184,49 @@ data class LineupResponse(
 )
 
 @Serializable
+data class TableResponse(val standings: List<StandingRow> = emptyList())
+
+@Serializable
+data class StandingRow(
+    val team: String = "",
+    @SerialName("team_id") val teamId: Int? = null,
+    val played: Int = 0,
+    val wins: Int = 0,
+    val draws: Int = 0,
+    val losses: Int = 0,
+    @SerialName("goals_for") val goalsFor: Int = 0,
+    @SerialName("goals_against") val goalsAgainst: Int = 0,
+    @SerialName("goal_difference") val goalDifference: Int = 0,
+    val points: Int = 0,
+    // Last-5 results, e.g. ["W","D","L","W","W"]
+    val form: List<String> = emptyList(),
+    @SerialName("position_change") val positionChange: Int = 0,
+)
+
+@Serializable
+data class LeaderboardEntry(
+    val rank: Int = 0,
+    @SerialName("player_id") val playerId: Int? = null,
+    @SerialName("jersey_number") val jerseyNumber: Int? = null,
+    @SerialName("first_name") val firstName: String? = null,
+    @SerialName("last_name") val lastName: String? = null,
+    @SerialName("team_name") val teamName: String? = null,
+    val goals: Int = 0,
+    @SerialName("games_played") val gamesPlayed: Int = 0,
+    @SerialName("goals_per_game") val goalsPerGame: Double = 0.0,
+) {
+    val playerLabel: String
+        get() = listOfNotNull(firstName, lastName).joinToString(" ")
+            .ifBlank { jerseyNumber?.let { "#$it" } ?: "Unknown" }
+}
+
+@Serializable
+data class SeasonDto(val id: Int, val name: String? = null)
+
+@Serializable
+data class AgeGroupDto(val id: Int, val name: String = "")
+
+@Serializable
 data class ClockRequest(
     val action: String,
     @SerialName("half_duration") val halfDuration: Int? = null,

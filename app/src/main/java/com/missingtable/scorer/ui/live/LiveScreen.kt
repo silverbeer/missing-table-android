@@ -92,6 +92,9 @@ fun LiveScreen(
     seasonId: Int?,
     ageGroupId: Int?,
     onBack: () -> Unit,
+    // Fan view (SB-320): scoreboard + clock + timeline only — no scoring
+    // controls, no clock menu, no deletes, no queue affordances.
+    readOnly: Boolean = false,
 ) {
     var serverState by remember { mutableStateOf<LiveMatchState?>(null) }
     var rosters by remember { mutableStateOf<Map<Int, List<RosterPlayer>>>(emptyMap()) }
@@ -138,7 +141,7 @@ fun LiveScreen(
     // no age_group_id set, so only use it as a fallback refinement.
     LaunchedEffect(state?.homeTeamId, state?.awayTeamId) {
         val s = state ?: return@LaunchedEffect
-        if (seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
+        if (readOnly || seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
         val loaded = mutableMapOf<Int, List<RosterPlayer>>()
         val startingXi = mutableMapOf<Int, Set<Int>>()
         listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
@@ -211,6 +214,7 @@ fun LiveScreen(
                     }
                 },
                 actions = {
+                    if (readOnly) return@TopAppBar
                     if (pending.isNotEmpty()) {
                         Text(
                             "${pending.size} pending",
@@ -297,7 +301,7 @@ fun LiveScreen(
             // A rejected (4xx) action pauses the whole queue — strict FIFO —
             // so it must be resolved before anything else syncs.
             val failedAction = pending.firstOrNull { it.status == PendingAction.Status.FAILED }
-            if (failedAction != null) {
+            if (!readOnly && failedAction != null) {
                 Card(
                     colors = androidx.compose.material3.CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
@@ -355,29 +359,31 @@ fun LiveScreen(
                 )
             }
 
-            // Goal buttons
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GoalButton(s.homeTeamName, Modifier.weight(1f)) {
-                    s.homeTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+            // Goal buttons (scorer only)
+            if (!readOnly) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GoalButton(s.homeTeamName, Modifier.weight(1f)) {
+                        s.homeTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                    }
+                    GoalButton(s.awayTeamName, Modifier.weight(1f)) {
+                        s.awayTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                    }
                 }
-                GoalButton(s.awayTeamName, Modifier.weight(1f)) {
-                    s.awayTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { flow = ActionFlow.SubPickTeam },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                    ) { Text("SUB") }
+                    OutlinedButton(
+                        onClick = { flow = ActionFlow.CardPickTeam },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                    ) { Text("CARD") }
                 }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { flow = ActionFlow.SubPickTeam },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                ) { Text("SUB") }
-                OutlinedButton(
-                    onClick = { flow = ActionFlow.CardPickTeam },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                ) { Text("CARD") }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -423,7 +429,7 @@ fun LiveScreen(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            if (e.eventType != "status_change") {
+                            if (!readOnly && e.eventType != "status_change") {
                                 IconButton(onClick = {
                                     if (isPending) {
                                         // Never synced — just drop the queued row.
