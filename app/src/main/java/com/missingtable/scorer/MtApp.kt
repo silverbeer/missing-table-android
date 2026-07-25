@@ -63,6 +63,18 @@ class AppContainer(app: Application) {
     val connectivity = ConnectivityWatcher(app) { syncEngine.kick() }
 
     val liveRepo = LiveMatchRepository(db.pendingActionDao(), syncEngine, json, app)
+
+    /**
+     * Pull /api/auth/me and cache role/team/club (SB-317). Best-effort: on
+     * failure the previous cached session stands (canScore defaults open
+     * until a first success — the server enforces the real permissions).
+     */
+    suspend fun refreshSession() {
+        runCatching { api.me() }.onSuccess { me ->
+            val p = me.user?.profile ?: return
+            tokenStore.saveSession(p.role, p.teamId, p.clubId, p.displayName ?: p.username)
+        }
+    }
 }
 
 class MtApp : Application() {

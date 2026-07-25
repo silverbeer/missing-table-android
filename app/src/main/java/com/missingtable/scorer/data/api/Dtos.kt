@@ -17,6 +17,27 @@ data class AuthResponse(
 )
 
 @Serializable
+data class MeResponse(val user: MeUser? = null)
+
+@Serializable
+data class MeUser(
+    val id: String? = null,
+    val email: String? = null,
+    val profile: MeProfile? = null,
+)
+
+@Serializable
+data class MeProfile(
+    val username: String? = null,
+    // Backend roles: admin, club_manager, team-manager (legacy team_manager),
+    // team-player, team-fan, club_fan.
+    val role: String? = null,
+    @SerialName("team_id") val teamId: Int? = null,
+    @SerialName("club_id") val clubId: Int? = null,
+    @SerialName("display_name") val displayName: String? = null,
+)
+
+@Serializable
 data class MatchSummary(
     val id: Int,
     @SerialName("match_date") val matchDate: String,
