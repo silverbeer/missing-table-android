@@ -9,4 +9,6 @@ captures/
 .cxx/
 *.keystore
 !debug.keystore
+# Release signing keystore — never commit; provided to CI via base64 secret.
+*.jks
 .idea/
