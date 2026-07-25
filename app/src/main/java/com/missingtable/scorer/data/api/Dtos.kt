@@ -255,6 +255,19 @@ data class PostMatchCardRequest(
     @SerialName("extra_time") val extraTime: Int? = null,
 )
 
+@Serializable
+data class PlayerStatEntry(
+    @SerialName("player_id") val playerId: Int,
+    val started: Boolean,
+    val played: Boolean,
+    @SerialName("minutes_played") val minutesPlayed: Int,
+    @SerialName("yellow_cards") val yellowCards: Int = 0,
+    @SerialName("red_cards") val redCards: Int = 0,
+)
+
+@Serializable
+data class BatchPlayerStatsUpdate(val players: List<PlayerStatEntry>)
+
 /** PATCH /api/admin/goals/{event_id} — only non-null fields are applied. */
 @Serializable
 data class GoalEventUpdateRequest(
