@@ -224,6 +224,13 @@ data class LeaderboardEntry(
 data class SeasonDto(val id: Int, val name: String? = null)
 
 @Serializable
+data class ApkUrlResponse(
+    @SerialName("download_url") val downloadUrl: String,
+    // Null until the backend/release pipeline both carry SB-322.
+    @SerialName("version_code") val versionCode: Int? = null,
+)
+
+@Serializable
 data class AgeGroupDto(val id: Int, val name: String = "")
 
 @Serializable
