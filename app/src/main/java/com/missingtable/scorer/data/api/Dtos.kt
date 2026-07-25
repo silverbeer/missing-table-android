@@ -265,6 +265,55 @@ data class GoalEventUpdateRequest(
     @SerialName("assist_player_id") val assistPlayerId: Int? = null,
 )
 
+// ── Tournaments (SB-324, read-only) ─────────────────────────────────────────
+
+@Serializable
+data class TournamentSummary(
+    val id: Int,
+    val name: String = "",
+    @SerialName("season_id") val seasonId: Int? = null,
+    @SerialName("start_date") val startDate: String? = null,
+    @SerialName("end_date") val endDate: String? = null,
+    val location: String? = null,
+    val description: String? = null,
+    @SerialName("logo_url") val logoUrl: String? = null,
+    @SerialName("age_groups") val ageGroups: List<AgeGroupDto> = emptyList(),
+    @SerialName("match_count") val matchCount: Int = 0,
+)
+
+@Serializable
+data class TournamentDetail(
+    val id: Int,
+    val name: String = "",
+    @SerialName("start_date") val startDate: String? = null,
+    @SerialName("end_date") val endDate: String? = null,
+    val location: String? = null,
+    val description: String? = null,
+    @SerialName("age_groups") val ageGroups: List<AgeGroupDto> = emptyList(),
+    val matches: List<TournamentMatch> = emptyList(),
+)
+
+@Serializable
+data class TournamentMatch(
+    val id: Int,
+    @SerialName("match_date") val matchDate: String? = null,
+    @SerialName("scheduled_kickoff") val scheduledKickoff: String? = null,
+    @SerialName("match_status") val matchStatus: String? = null,
+    @SerialName("home_score") val homeScore: Int? = null,
+    @SerialName("away_score") val awayScore: Int? = null,
+    @SerialName("home_penalty_score") val homePenaltyScore: Int? = null,
+    @SerialName("away_penalty_score") val awayPenaltyScore: Int? = null,
+    @SerialName("tournament_group") val tournamentGroup: String? = null,
+    @SerialName("tournament_round") val tournamentRound: String? = null,
+    @SerialName("tournament_round_order") val tournamentRoundOrder: Int? = null,
+    @SerialName("age_group") val ageGroup: AgeGroupDto? = null,
+    @SerialName("home_team") val homeTeam: TeamRef? = null,
+    @SerialName("away_team") val awayTeam: TeamRef? = null,
+)
+
+@Serializable
+data class TeamRef(val id: Int, val name: String = "")
+
 @Serializable
 data class PlayerStatsResponse(
     @SerialName("player_id") val playerId: Int? = null,

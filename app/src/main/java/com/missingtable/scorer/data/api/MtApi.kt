@@ -58,6 +58,12 @@ interface MtApi {
     @GET("api/me/player-stats")
     suspend fun myPlayerStats(@Query("season_id") seasonId: Int): PlayerStatsResponse
 
+    @GET("api/tournaments")
+    suspend fun tournaments(@Query("season_id") seasonId: Int? = null): List<TournamentSummary>
+
+    @GET("api/tournaments/{id}")
+    suspend fun tournament(@Path("id") tournamentId: Int): TournamentDetail
+
     @GET("api/teams/{teamId}/roster")
     suspend fun roster(
         @Path("teamId") teamId: Int,
