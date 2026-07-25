@@ -51,6 +51,9 @@ interface MtApi {
     @GET("api/age-groups")
     suspend fun ageGroups(): List<AgeGroupDto>
 
+    @GET("api/android/apk-url")
+    suspend fun apkUrl(): ApkUrlResponse
+
     @GET("api/teams/{teamId}/roster")
     suspend fun roster(
         @Path("teamId") teamId: Int,

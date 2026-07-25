@@ -53,10 +53,14 @@ jobs:
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           ct="application/vnd.android.package-archive"
           # Versioned history + stable "latest" key the web-UI button points at.
+          # versioncode metadata backs the in-app update check (SB-322): the
+          # backend reads it via head_object and the app compares it to its own.
           aws s3 cp "$apk" "s3://mt-android-releases/builds/${{ github.run_number }}.apk" \
-            --endpoint-url "$endpoint" --content-type "$ct"
+            --endpoint-url "$endpoint" --content-type "$ct" \
+            --metadata "versioncode=${{ github.run_number }}"
           aws s3 cp "$apk" "s3://mt-android-releases/latest/missingtable.apk" \
-            --endpoint-url "$endpoint" --content-type "$ct"
+            --endpoint-url "$endpoint" --content-type "$ct" \
+            --metadata "versioncode=${{ github.run_number }}"
           echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
 
       - name: Upload APK as workflow artifact
