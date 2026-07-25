@@ -1,6 +1,6 @@
 package com.missingtable.scorer.data.api
 
-import com.missingtable.scorer.data.auth.TokenStore
+import com.missingtable.scorer.data.auth.TokenStorage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -14,7 +14,7 @@ import okhttp3.Response
 import okhttp3.Route
 
 /** Adds the bearer token to every request. */
-class AuthInterceptor(private val tokenStore: TokenStore) : Interceptor {
+class AuthInterceptor(private val tokenStore: TokenStorage) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         if (request.url.encodedPath.startsWith("/api/auth/login") ||
@@ -32,10 +32,15 @@ class AuthInterceptor(private val tokenStore: TokenStore) : Interceptor {
 /**
  * On 401, refresh the token (with rotation) and retry once.
  * Uses a bare OkHttp client so the refresh call skips this authenticator.
+ *
+ * Refresh outcomes: 2xx → rotate tokens and retry; 401 → refresh token is
+ * dead, clear tokens so the UI can drop to login; anything else (503,
+ * network error — the backend returns 503 on transient failures, SB-123)
+ * → keep tokens and fail this request only.
  */
 class TokenAuthenticator(
     private val baseUrl: String,
-    private val tokenStore: TokenStore,
+    private val tokenStore: TokenStorage,
 ) : Authenticator {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -55,6 +60,10 @@ class TokenAuthenticator(
                 Request.Builder().url("$baseUrl/api/auth/refresh").post(body).build()
             )
             call.execute().use { r ->
+                if (r.code == 401) {
+                    tokenStore.clearBlocking()
+                    return@runCatching null
+                }
                 if (!r.isSuccessful) return@runCatching null
                 val obj = json.parseToJsonElement(r.body!!.string()).jsonObject
                 // POST /api/auth/refresh nests the rotated tokens under "session"
