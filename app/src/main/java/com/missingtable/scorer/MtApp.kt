@@ -1,10 +1,20 @@
 package com.missingtable.scorer
 
 import android.app.Application
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.missingtable.scorer.data.api.AuthInterceptor
 import com.missingtable.scorer.data.api.MtApi
 import com.missingtable.scorer.data.api.TokenAuthenticator
 import com.missingtable.scorer.data.auth.TokenStore
+import com.missingtable.scorer.data.db.MtDatabase
+import com.missingtable.scorer.data.repo.LiveMatchRepository
+import com.missingtable.scorer.data.sync.ConnectivityWatcher
+import com.missingtable.scorer.data.sync.SyncEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -15,7 +25,9 @@ import java.util.concurrent.TimeUnit
 class AppContainer(app: Application) {
     val tokenStore = TokenStore(app)
 
-    private val json = Json {
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
         explicitNulls = false
@@ -43,6 +55,14 @@ class AppContainer(app: Application) {
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
         .create(MtApi::class.java)
+
+    private val db = MtDatabase.build(app)
+
+    val syncEngine = SyncEngine(db.pendingActionDao(), api, json, appScope)
+
+    val connectivity = ConnectivityWatcher(app) { syncEngine.kick() }
+
+    val liveRepo = LiveMatchRepository(db.pendingActionDao(), syncEngine, json, app)
 }
 
 class MtApp : Application() {
@@ -52,5 +72,11 @@ class MtApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.connectivity.start()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START) container.syncEngine.kick()
+            }
+        )
     }
 }
