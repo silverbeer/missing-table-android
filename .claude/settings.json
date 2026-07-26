@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-gate.sh\"",
+            "if": "Bash(gh pr create*)",
+            "timeout": 300,
+            "statusMessage": "PR gate: running unit tests…"
+          }
+        ]
+      }
+    ]
+  }
+}
