@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0D3B2E</color>
+    <!-- Dark navy matching the web PWA icon background (SB-342) -->
+    <color name="ic_launcher_background">#0F172A</color>
 </resources>
