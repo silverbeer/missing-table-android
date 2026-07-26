@@ -221,7 +221,23 @@ data class LeaderboardEntry(
 }
 
 @Serializable
-data class SeasonDto(val id: Int, val name: String? = null)
+data class SeasonDto(
+    val id: Int,
+    val name: String? = null,
+    // Authoritative current-season flag (admin-set, exactly one true).
+    @SerialName("is_current") val isCurrent: Boolean = false,
+    @SerialName("start_date") val startDate: String? = null,
+)
+
+@Serializable
+data class LeagueDto(val id: Int, val name: String = "")
+
+@Serializable
+data class DivisionDto(
+    val id: Int,
+    val name: String = "",
+    @SerialName("league_id") val leagueId: Int? = null,
+)
 
 // ── Post-match editing (SB-281) ─────────────────────────────────────────────
 // match_minute is REQUIRED (1..130) on the post-match endpoints, unlike live.

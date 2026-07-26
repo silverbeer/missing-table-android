@@ -64,6 +64,17 @@ class AppContainer(app: Application) {
 
     val liveRepo = LiveMatchRepository(db.pendingActionDao(), syncEngine, json, app)
 
+    // Current season (SB-338): one lookup per process. /api/matches does NOT
+    // default to the current season server-side, so every match/tournament
+    // fetch must pass this explicitly or prior-season data leaks in.
+    private var cachedSeasonId: Int? = null
+
+    suspend fun currentSeasonId(): Int? {
+        cachedSeasonId?.let { return it }
+        return runCatching { api.currentSeason().id }.getOrNull()
+            ?.also { cachedSeasonId = it }
+    }
+
     /**
      * Pull /api/auth/me and cache role/team/club (SB-317). Best-effort: on
      * failure the previous cached session stands (canScore defaults open
