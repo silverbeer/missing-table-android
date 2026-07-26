@@ -63,6 +63,16 @@ jobs:
             --metadata "versioncode=${{ github.run_number }}"
           echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
 
+          # Prune build history — keep only the newest 2 (SB-327). latest/ is
+          # a stable overwrite key and is never touched here.
+          aws s3 ls "s3://mt-android-releases/builds/" --endpoint-url "$endpoint" \
+            | awk '{print $4}' | sed 's/\.apk$//' | sort -n | head -n -2 \
+            | while read -r n; do
+                [ -n "$n" ] || continue
+                echo "Pruning old build $n.apk"
+                aws s3 rm "s3://mt-android-releases/builds/$n.apk" --endpoint-url "$endpoint"
+              done
+
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
