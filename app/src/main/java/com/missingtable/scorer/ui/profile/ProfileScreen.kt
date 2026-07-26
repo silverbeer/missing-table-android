@@ -40,8 +40,8 @@ fun ProfileScreen(container: AppContainer, onLogout: () -> Unit) {
 
     LaunchedEffect(Unit) {
         runCatching {
-            val season = container.api.currentSeason()
-            container.api.myPlayerStats(season.id)
+            val seasonId = requireNotNull(container.currentSeasonId()) { "no season" }
+            container.api.myPlayerStats(seasonId)
         }.onSuccess { stats = it }
     }
 

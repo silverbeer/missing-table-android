@@ -56,6 +56,10 @@ fun MatchListScreen(
         val today = LocalDate.now()
         runCatching {
             container.api.matches(
+                // /api/matches has NO server-side season default — without
+                // this, prior-season matches inside the window leak in
+                // (SB-338). Null (offline) degrades to date-window-only.
+                seasonId = container.currentSeasonId(),
                 // Wide window so the list isn't empty off-season
                 startDate = today.minusDays(60).toString(),
                 endDate = today.plusDays(30).toString(),

@@ -36,8 +36,8 @@ fun LeaderboardScreen(container: AppContainer) {
 
     LaunchedEffect(Unit) {
         runCatching {
-            val season = container.api.currentSeason()
-            container.api.goalsLeaderboard(seasonId = season.id)
+            val seasonId = requireNotNull(container.currentSeasonId()) { "no season" }
+            container.api.goalsLeaderboard(seasonId = seasonId)
         }
             .onSuccess { entries = it }
             .onFailure { error = "Couldn't load the leaderboard" }

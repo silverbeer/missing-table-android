@@ -49,6 +49,15 @@ interface MtApi {
     @GET("api/current-season")
     suspend fun currentSeason(): SeasonDto
 
+    @GET("api/seasons")
+    suspend fun seasons(): List<SeasonDto>
+
+    @GET("api/leagues")
+    suspend fun leagues(): List<LeagueDto>
+
+    @GET("api/divisions")
+    suspend fun divisions(): List<DivisionDto>
+
     @GET("api/age-groups")
     suspend fun ageGroups(): List<AgeGroupDto>
 
