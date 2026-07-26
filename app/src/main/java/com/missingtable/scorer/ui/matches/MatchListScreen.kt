@@ -34,31 +34,21 @@ import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
 import java.time.LocalDate
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MatchListScreen(
     container: AppContainer,
     onOpenMatch: (MatchSummary) -> Unit,
+    // Update state lives in HomeShell (SB-322/SB-328) — it also owns the
+    // force-upgrade gate, so there's a single apkUrl() check per session.
+    updateAvailable: Boolean = false,
+    onDownloadUpdate: () -> Unit = {},
 ) {
     var matches by remember { mutableStateOf<List<MatchSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
-    var updateAvailable by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-
-    // In-app update check (SB-322): the APK is sideloaded, so this banner is
-    // the only update channel. version_code comes from R2 object metadata via
-    // the backend; null (old backend/release) just means no banner.
-    LaunchedEffect(Unit) {
-        runCatching { container.api.apkUrl() }.onSuccess { resp ->
-            val latest = resp.versionCode ?: return@onSuccess
-            updateAvailable = latest > com.missingtable.scorer.BuildConfig.VERSION_CODE
-        }
-    }
 
     LaunchedEffect(reloadKey) {
         loading = true
@@ -122,20 +112,7 @@ fun MatchListScreen(
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                // Mint a fresh presigned URL at tap time (they
-                                // expire in 5 min) and hand it to the browser.
-                                scope.launch {
-                                    runCatching { container.api.apkUrl() }.onSuccess { resp ->
-                                        context.startActivity(
-                                            android.content.Intent(
-                                                android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse(resp.downloadUrl),
-                                            )
-                                        )
-                                    }
-                                }
-                            },
+                            .clickable { onDownloadUpdate() },
                     ) {
                         Text(
                             "Update available — tap to download the new version",

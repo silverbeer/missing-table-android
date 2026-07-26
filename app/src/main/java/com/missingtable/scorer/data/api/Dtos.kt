@@ -348,8 +348,9 @@ data class PlayerSeasonStats(
 @Serializable
 data class ApkUrlResponse(
     @SerialName("download_url") val downloadUrl: String,
-    // Null until the backend/release pipeline both carry SB-322.
+    // Null until the backend/release pipeline both carry SB-322/SB-328.
     @SerialName("version_code") val versionCode: Int? = null,
+    @SerialName("min_version_code") val minVersionCode: Int? = null,
 )
 
 @Serializable
