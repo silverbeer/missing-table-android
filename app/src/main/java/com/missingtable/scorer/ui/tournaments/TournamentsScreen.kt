@@ -36,9 +36,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
+import com.missingtable.scorer.data.api.SeasonDto
 import com.missingtable.scorer.data.api.TournamentDetail
 import com.missingtable.scorer.data.api.TournamentMatch
 import com.missingtable.scorer.data.api.TournamentSummary
+import com.missingtable.scorer.domain.Seasons
 import com.missingtable.scorer.domain.TournamentStandings
 
 /**
@@ -61,39 +63,95 @@ fun TournamentsScreen(container: AppContainer) {
 @Composable
 private fun TournamentList(container: AppContainer, onOpen: (Int) -> Unit) {
     var tournaments by remember { mutableStateOf<List<TournamentSummary>?>(null) }
+    var seasons by remember { mutableStateOf<List<SeasonDto>>(emptyList()) }
+    var selectedSeasonId by remember { mutableStateOf<Int?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // Seasons load once; default = current (is_current else newest) — parity
+    // with the web's TournamentMatchCenter season select (SB-339).
     LaunchedEffect(Unit) {
-        runCatching { container.api.tournaments() }
+        runCatching { container.api.seasons() }.onSuccess { list ->
+            seasons = list
+            if (selectedSeasonId == null) selectedSeasonId = Seasons.pickCurrent(list)?.id
+        }.onFailure { error = "Couldn't load seasons" }
+    }
+
+    LaunchedEffect(selectedSeasonId) {
+        val seasonId = selectedSeasonId ?: return@LaunchedEffect
+        tournaments = null
+        error = null
+        runCatching { container.api.tournaments(seasonId) }
             .onSuccess { tournaments = it }
             .onFailure { error = "Couldn't load tournaments" }
     }
 
-    when {
-        error != null -> Center(error!!)
-        tournaments == null -> Loading()
-        tournaments!!.isEmpty() -> Center("No tournaments yet")
-        else -> LazyColumn(
-            Modifier.fillMaxSize().padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(tournaments!!, key = { it.id }) { t ->
-                Card(Modifier.fillMaxWidth().clickable { onOpen(t.id) }) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(t.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        val dates = listOfNotNull(t.startDate, t.endDate).distinct().joinToString(" → ")
-                        val sub = listOfNotNull(
-                            dates.ifBlank { null },
-                            t.location,
-                            t.ageGroups.joinToString(", ") { it.name }.ifBlank { null },
-                            "${t.matchCount} matches",
-                        ).joinToString("  ·  ")
-                        Text(
-                            sub,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+    Column(Modifier.fillMaxSize()) {
+        if (seasons.isNotEmpty()) {
+            SeasonDropdown(
+                seasons = seasons,
+                selectedId = selectedSeasonId,
+                onSelect = { selectedSeasonId = it },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+        when {
+            error != null -> Center(error!!)
+            tournaments == null -> Loading()
+            tournaments!!.isEmpty() -> Center("No tournaments this season")
+            else -> TournamentCards(tournaments!!, onOpen)
+        }
+    }
+}
+
+@Composable
+private fun SeasonDropdown(
+    seasons: List<SeasonDto>,
+    selectedId: Int?,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by remember { mutableStateOf(false) }
+    val label = seasons.firstOrNull { it.id == selectedId }?.name ?: "Season"
+    Box(modifier) {
+        androidx.compose.material3.OutlinedButton(onClick = { open = true }) {
+            Text(label)
+        }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            seasons.forEach { s ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(s.name ?: "Season ${s.id}") },
+                    onClick = {
+                        open = false
+                        onSelect(s.id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TournamentCards(tournaments: List<TournamentSummary>, onOpen: (Int) -> Unit) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(tournaments, key = { it.id }) { t ->
+            Card(Modifier.fillMaxWidth().clickable { onOpen(t.id) }) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(t.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    val dates = listOfNotNull(t.startDate, t.endDate).distinct().joinToString(" → ")
+                    val sub = listOfNotNull(
+                        dates.ifBlank { null },
+                        t.location,
+                        t.ageGroups.joinToString(", ") { it.name }.ifBlank { null },
+                        "${t.matchCount} matches",
+                    ).joinToString("  ·  ")
+                    Text(
+                        sub,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
