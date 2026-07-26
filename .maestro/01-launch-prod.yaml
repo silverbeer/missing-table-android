@@ -1,0 +1,16 @@
+# Release-gate smoke (SB-353): same assertions as 01-launch.yaml but against
+# the prod appId. android-release.yml runs this on the actual signed release
+# APK before publishing to R2, so a build that crashes on launch never reaches
+# phones. Keep the assertions in lockstep with 01-launch.yaml.
+appId: com.missingtable.scorer
+---
+- launchApp:
+    clearState: true
+- assertVisible: 'Missing Table'
+- assertVisible: 'Match-day live scoring'
+- assertVisible: 'Username'
+- assertVisible: 'Password'
+- assertVisible: 'Sign in'
+# Version footer (SB-329)
+- assertVisible:
+    text: 'v.*build.*'

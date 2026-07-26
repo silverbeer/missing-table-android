@@ -1,8 +1,13 @@
 name: Android Release
 
-# Build a signed prod release APK and publish it to Cloudflare R2
-# (mt-android-releases) for sideload distribution. Fires on a version tag,
-# or manually via the Actions tab.
+# Build a signed prod release APK, smoke-test it on an emulator, and publish
+# it to Cloudflare R2 (mt-android-releases) for sideload distribution. Fires
+# on a version tag, or manually via the Actions tab.
+#
+# Three jobs (SB-353): build → smoke → publish. The Maestro launch smoke runs
+# against the exact signed APK that would ship; a red smoke blocks the R2
+# publish entirely, so a launch-crashing build is never force-fed to phones
+# by the force-upgrade mechanism.
 on:
   push:
     tags: ["v*"]
@@ -12,7 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +46,71 @@ jobs:
           ANDROID_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew --no-daemon assembleProdRelease
 
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: missingtable-prod-release
+          path: app/build/outputs/apk/prod/release/app-prod-release.apk
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: missingtable-prod-release
+          path: apk
+
+      - name: Install Maestro
+        run: |
+          curl -Ls https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Run launch smoke on the signed APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            adb install -r apk/app-prod-release.apk
+            maestro test .maestro/01-launch-prod.yaml
+
+      - name: Upload Maestro debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-debug
+          path: ~/.maestro/tests/
+
+  publish:
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: missingtable-prod-release
+          path: apk
+
       - name: Publish APK to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -49,7 +119,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          apk="app/build/outputs/apk/prod/release/app-prod-release.apk"
+          apk="apk/app-prod-release.apk"
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           ct="application/vnd.android.package-archive"
           # Min supported version = the newest build BEFORE this release. With
@@ -80,10 +150,3 @@ jobs:
                 echo "Pruning old build $n.apk"
                 aws s3 rm "s3://mt-android-releases/builds/$n.apk" --endpoint-url "$endpoint"
               done
-
-      - name: Upload APK as workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: missingtable-prod-release
-          path: app/build/outputs/apk/prod/release/app-prod-release.apk
-          if-no-files-found: error
