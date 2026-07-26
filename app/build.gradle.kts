@@ -22,7 +22,7 @@ android {
         // CI passes the workflow run number so each build supersedes the last
         // on-device; local builds stay at 1.
         versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "0.2.2"
+        versionName = "0.2.3"
     }
 
     signingConfigs {
