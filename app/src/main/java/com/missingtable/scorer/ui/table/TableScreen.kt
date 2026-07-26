@@ -13,9 +13,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,52 +34,115 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.AgeGroupDto
+import com.missingtable.scorer.data.api.DivisionDto
+import com.missingtable.scorer.data.api.LeagueDto
+import com.missingtable.scorer.data.api.SeasonDto
 import com.missingtable.scorer.data.api.StandingRow
+import com.missingtable.scorer.domain.Seasons
 
 /**
- * League table (read-only) — server defaults to the admin-set current season
- * when no season_id is passed, so this needs no season logic of its own.
+ * League table with the web's four filters (SB-340), replicating
+ * LeagueTable.vue exactly: Age-group pills → League pills → Season dropdown →
+ * Division dropdown. Division options are league-scoped (division.league_id);
+ * defaults U14 / Homegrown / current season / Northeast. Request params match
+ * the web: season_id + age_group_id + division_id (match_type stays the
+ * server default "League").
  */
 @Composable
 fun TableScreen(container: AppContainer) {
-    var standings by remember { mutableStateOf<List<StandingRow>?>(null) }
     var ageGroups by remember { mutableStateOf<List<AgeGroupDto>>(emptyList()) }
+    var leagues by remember { mutableStateOf<List<LeagueDto>>(emptyList()) }
+    var seasons by remember { mutableStateOf<List<SeasonDto>>(emptyList()) }
+    var allDivisions by remember { mutableStateOf<List<DivisionDto>>(emptyList()) }
+
     var selectedAgeGroup by remember { mutableStateOf<Int?>(null) }
+    var selectedLeague by remember { mutableStateOf<Int?>(null) }
+    var selectedSeason by remember { mutableStateOf<Int?>(null) }
+    var selectedDivision by remember { mutableStateOf<Int?>(null) }
+
+    var standings by remember { mutableStateOf<List<StandingRow>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    val divisionOptions = allDivisions.filter { it.leagueId == selectedLeague }
+
     LaunchedEffect(Unit) {
-        runCatching { container.api.ageGroups() }.onSuccess { ageGroups = it }
+        runCatching { container.api.ageGroups() }.onSuccess { list ->
+            ageGroups = list
+            if (selectedAgeGroup == null) {
+                selectedAgeGroup = (list.firstOrNull { it.name == "U14" } ?: list.firstOrNull())?.id
+            }
+        }
+        runCatching { container.api.leagues() }.onSuccess { list ->
+            leagues = list
+            if (selectedLeague == null) {
+                selectedLeague = (list.firstOrNull { it.name == "Homegrown" } ?: list.firstOrNull())?.id
+            }
+        }
+        runCatching { container.api.seasons() }.onSuccess { list ->
+            seasons = list
+            if (selectedSeason == null) selectedSeason = Seasons.pickCurrent(list)?.id
+        }
+        runCatching { container.api.divisions() }.onSuccess { allDivisions = it }
     }
 
-    LaunchedEffect(selectedAgeGroup) {
+    // League drives division options; pick "Northeast" within the league on
+    // first load, and auto-select the first division whenever the current one
+    // falls outside the newly selected league (web behavior).
+    LaunchedEffect(selectedLeague, allDivisions) {
+        val options = allDivisions.filter { it.leagueId == selectedLeague }
+        if (options.isEmpty()) return@LaunchedEffect
+        if (options.none { it.id == selectedDivision }) {
+            selectedDivision = (options.firstOrNull { it.name == "Northeast" } ?: options.first()).id
+        }
+    }
+
+    LaunchedEffect(selectedSeason, selectedAgeGroup, selectedDivision) {
+        val season = selectedSeason ?: return@LaunchedEffect
+        val ageGroup = selectedAgeGroup ?: return@LaunchedEffect
+        val division = selectedDivision ?: return@LaunchedEffect
         standings = null
         error = null
-        runCatching { container.api.table(ageGroupId = selectedAgeGroup) }
+        runCatching {
+            container.api.table(seasonId = season, ageGroupId = ageGroup, divisionId = division)
+        }
             .onSuccess { standings = it.standings }
             .onFailure { error = "Couldn't load the table" }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         if (ageGroups.isNotEmpty()) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
-                    selected = selectedAgeGroup == null,
-                    onClick = { selectedAgeGroup = null },
-                    label = { Text("All") },
+            ChipRow(
+                options = ageGroups.map { it.id to it.name },
+                selectedId = selectedAgeGroup,
+                onSelect = { selectedAgeGroup = it },
+            )
+        }
+        if (leagues.isNotEmpty()) {
+            ChipRow(
+                options = leagues.map { it.id to it.name },
+                selectedId = selectedLeague,
+                onSelect = { selectedLeague = it },
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (seasons.isNotEmpty()) {
+                PickerDropdown(
+                    options = seasons.map { it.id to (it.name ?: "Season ${it.id}") },
+                    selectedId = selectedSeason,
+                    placeholder = "Season",
+                    onSelect = { selectedSeason = it },
                 )
-                ageGroups.forEach { ag ->
-                    FilterChip(
-                        selected = selectedAgeGroup == ag.id,
-                        onClick = { selectedAgeGroup = ag.id },
-                        label = { Text(ag.name) },
-                    )
-                }
+            }
+            if (divisionOptions.isNotEmpty()) {
+                PickerDropdown(
+                    options = divisionOptions.map { it.id to it.name },
+                    selectedId = selectedDivision,
+                    placeholder = "Division",
+                    onSelect = { selectedDivision = it },
+                )
             }
         }
 
@@ -99,6 +165,55 @@ fun TableScreen(container: AppContainer) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChipRow(
+    options: List<Pair<Int, String>>,
+    selectedId: Int?,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { (id, name) ->
+            FilterChip(
+                selected = selectedId == id,
+                onClick = { onSelect(id) },
+                label = { Text(name) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PickerDropdown(
+    options: List<Pair<Int, String>>,
+    selectedId: Int?,
+    placeholder: String,
+    onSelect: (Int) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { open = true }) {
+            Text(options.firstOrNull { it.first == selectedId }?.second ?: placeholder)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { (id, name) ->
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    onClick = {
+                        open = false
+                        onSelect(id)
+                    },
+                )
             }
         }
     }
