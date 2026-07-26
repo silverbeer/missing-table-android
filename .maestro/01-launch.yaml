@@ -1,0 +1,15 @@
+# Credential-free smoke: the app boots and the login screen renders.
+# Catches startup crashes (DI wiring, Room schema, Compose init) without
+# needing a backend or an account. Runs in CI on every dispatch/nightly.
+appId: com.missingtable.scorer.local
+---
+- launchApp:
+    clearState: true
+- assertVisible: 'Missing Table'
+- assertVisible: 'Match-day live scoring'
+- assertVisible: 'Username'
+- assertVisible: 'Password'
+- assertVisible: 'Sign in'
+# Version footer (SB-329)
+- assertVisible:
+    text: 'v.*build.*'

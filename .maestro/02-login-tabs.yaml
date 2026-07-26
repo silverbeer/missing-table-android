@@ -1,0 +1,47 @@
+# Login + bottom-tab walk + logout. Needs a reachable backend for the
+# installed flavor (local flavor -> http://10.0.2.2:8000, prod -> live API)
+# and credentials:
+#   maestro test -e MT_E2E_USER=... -e MT_E2E_PASS=... .maestro/02-login-tabs.yaml
+# Local backend accounts come from missing-table/scripts/seed_e2e_users.sh.
+# Asserts are structural (filters/empty-states), not data-dependent, so the
+# flow passes on an empty database too.
+appId: com.missingtable.scorer.local
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Username'
+- inputText: '${MT_E2E_USER}'
+- tapOn: 'Password'
+- inputText: '${MT_E2E_PASS}'
+- hideKeyboard
+- tapOn: 'Sign in'
+# Match list is the landing tab
+- extendedWaitUntil:
+    visible: 'Matches'
+    timeout: 15000
+# Table: filter row renders (season chip = "20xx-20xx"), standings header or
+# empty-state either way
+- tapOn: 'Table'
+- extendedWaitUntil:
+    visible: '20\d\d-20\d\d'
+    timeout: 10000
+- assertVisible: 'Team|No completed matches yet'
+# Cups: season dropdown (named after a season) or empty state
+- tapOn: 'Cups'
+- extendedWaitUntil:
+    visible: '20\d\d-20\d\d|No tournaments this season'
+    timeout: 10000
+# Leaders: header when data exists, empty state otherwise
+- tapOn: 'Leaders'
+- extendedWaitUntil:
+    visible: 'Player|No goals yet this season'
+    timeout: 10000
+# Profile + logout returns to login
+- tapOn: 'Profile'
+- extendedWaitUntil:
+    visible: 'Log out'
+    timeout: 10000
+- tapOn: 'Log out'
+- extendedWaitUntil:
+    visible: 'Sign in'
+    timeout: 10000
