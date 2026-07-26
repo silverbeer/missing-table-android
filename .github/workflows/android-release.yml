@@ -52,15 +52,23 @@ jobs:
           apk="app/build/outputs/apk/prod/release/app-prod-release.apk"
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           ct="application/vnd.android.package-archive"
+          # Min supported version = the newest build BEFORE this release. With
+          # a keep-2 history (SB-327) users may lag at most one release; the
+          # app hard-blocks anything older (SB-328). First release ever: min =
+          # this build.
+          prev=$(aws s3 ls "s3://mt-android-releases/builds/" --endpoint-url "$endpoint" \
+            | awk '{print $4}' | sed 's/\.apk$//' | sort -n | tail -1)
+          min="${prev:-${{ github.run_number }}}"
+          echo "minversioncode=$min"
           # Versioned history + stable "latest" key the web-UI button points at.
           # versioncode metadata backs the in-app update check (SB-322): the
           # backend reads it via head_object and the app compares it to its own.
           aws s3 cp "$apk" "s3://mt-android-releases/builds/${{ github.run_number }}.apk" \
             --endpoint-url "$endpoint" --content-type "$ct" \
-            --metadata "versioncode=${{ github.run_number }}"
+            --metadata "versioncode=${{ github.run_number }},minversioncode=$min"
           aws s3 cp "$apk" "s3://mt-android-releases/latest/missingtable.apk" \
             --endpoint-url "$endpoint" --content-type "$ct" \
-            --metadata "versioncode=${{ github.run_number }}"
+            --metadata "versioncode=${{ github.run_number }},minversioncode=$min"
           echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
 
           # Prune build history — keep only the newest 2 (SB-327). latest/ is

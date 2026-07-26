@@ -5,7 +5,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -40,6 +43,7 @@ import com.missingtable.scorer.ui.profile.ProfileScreen
 import com.missingtable.scorer.ui.table.TableScreen
 import com.missingtable.scorer.ui.tournaments.TournamentsScreen
 import com.missingtable.scorer.ui.theme.MtTheme
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
@@ -193,11 +197,44 @@ private fun AppNav(container: AppContainer, startDestination: String) {
     }
 }
 
+/** Hard block for unsupported builds (SB-328) — only way forward is the download. */
+@Composable
+private fun ForceUpdateScreen(onDownload: () -> Unit) {
+    androidx.compose.foundation.layout.Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "Update required",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        )
+        androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+        Text(
+            "This version of MT Scorer (${BuildConfig.VERSION_NAME}) is no longer " +
+                "supported. Download the latest version to keep scoring.",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
+        androidx.compose.material3.Button(
+            onClick = onDownload,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) { Text("DOWNLOAD UPDATE") }
+    }
+}
+
 private enum class HomeTab(val label: String) {
     Matches("Matches"), Table("Table"), Tournaments("Cups"), Leaders("Leaders"), Profile("Profile")
 }
 
-/** Bottom-nav shell (SB-318): Matches | Table | Leaders. More tabs land with SB-324/325. */
+/** Bottom-nav shell (SB-318): Matches | Table | Cups | Leaders | Profile. */
 @Composable
 private fun HomeShell(
     container: AppContainer,
@@ -205,6 +242,40 @@ private fun HomeShell(
     onLogout: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(HomeTab.Matches) }
+    var updateAvailable by rememberSaveable { mutableStateOf(false) }
+    var forceUpdate by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    // Update check (SB-322/SB-328). The APK is sideloaded — this is the only
+    // update channel. Below min_version_code → hard block (release builds
+    // only; local debug builds are versionCode 1 and would always trip it).
+    LaunchedEffect(Unit) {
+        runCatching { container.api.apkUrl() }.onSuccess { resp ->
+            val mine = BuildConfig.VERSION_CODE
+            resp.versionCode?.let { updateAvailable = it > mine }
+            resp.minVersionCode?.let { forceUpdate = !BuildConfig.DEBUG && mine < it }
+        }
+    }
+
+    // Mint a fresh presigned URL at tap time (5-min TTL) and open the browser.
+    val downloadLatest: () -> Unit = {
+        scope.launch {
+            runCatching { container.api.apkUrl() }.onSuccess { resp ->
+                context.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(resp.downloadUrl),
+                    )
+                )
+            }
+        }
+    }
+
+    if (forceUpdate) {
+        ForceUpdateScreen(onDownload = downloadLatest)
+        return
+    }
 
     Scaffold(
         bottomBar = {
@@ -236,6 +307,8 @@ private fun HomeShell(
                 HomeTab.Matches -> MatchListScreen(
                     container = container,
                     onOpenMatch = onOpenMatch,
+                    updateAvailable = updateAvailable,
+                    onDownloadUpdate = downloadLatest,
                 )
                 HomeTab.Table -> TableScreen(container)
                 HomeTab.Tournaments -> TournamentsScreen(container)
