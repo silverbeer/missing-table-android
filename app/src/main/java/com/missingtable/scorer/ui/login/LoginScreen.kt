@@ -96,6 +96,13 @@ fun LoginScreen(container: AppContainer, onLoggedIn: () -> Unit) {
         ) {
             if (loading) CircularProgressIndicator(modifier = Modifier.height(24.dp)) else Text("Sign in")
         }
+        Spacer24()
+        Text(
+            "v${com.missingtable.scorer.BuildConfig.VERSION_NAME} " +
+                "(build ${com.missingtable.scorer.BuildConfig.VERSION_CODE})",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
