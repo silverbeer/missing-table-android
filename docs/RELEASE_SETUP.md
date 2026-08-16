@@ -14,21 +14,31 @@ is done, releasing is just pushing a git tag.
 ```
 git tag v0.1.1 ──▶ GitHub Actions (android-release.yml)
                      ├─ build signed prod APK (release keystore)
+                     ├─ Maestro launch smoke on that exact APK (SB-353)
                      └─ upload to Cloudflare R2 bucket "mt-android-releases"
-                          ├─ builds/<run>.apk   (history)
+                          ├─ builds/<run>.apk   (history, keep last 2)
                           └─ latest/missingtable.apk   (stable)
-                                    │  (public r2.dev URL)
-   MT web-UI footer "Install the Android app" ──┘
-        https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk
+
+   phone ──▶ log in to missingtable.com
+               └─ footer "Install the Android app"
+                    └─ authed GET /api/android/apk-url
+                         └─ short-lived presigned R2 URL ──▶ download .apk
 ```
+
+**The bucket is private and there is no public download URL.** MT is
+invite-only, so the APK must not be anonymously downloadable: the Terraform
+keeps `cloudflare_r2_managed_domain.android_releases` at `enabled = false`, and
+the old `pub-…r2.dev` address now returns **401**. Every install goes through an
+authenticated presigned URL minted by the backend.
 
 Already in place (no action needed):
 
 | Thing | Where | Status |
 |-------|-------|--------|
-| R2 bucket `mt-android-releases` + public URL | Terraform: `missingtable-platform-bootstrap` → `clouds/cloudflare/global/r2` (SB-313) | ✅ applied |
+| R2 bucket `mt-android-releases` (**private**, r2.dev disabled) | Terraform: `missingtable-platform-bootstrap` → `clouds/cloudflare/global/r2` (SB-313) | ✅ applied |
 | Release workflow | this repo → `.github/workflows/android-release.yml` | ✅ in repo |
-| Web-UI install button | `missing-table` → `frontend/src/components/VersionFooter.vue` | ✅ (PR) |
+| Presigned-URL endpoint `GET /api/android/apk-url` | `missing-table` → `backend/app.py`, `backend/r2_client.py` | ✅ live |
+| Web-UI install button | `missing-table` → `frontend/src/components/VersionFooter.vue` | ✅ live |
 
 You provide: the **signing keystore**, a **CI R2 token**, and the **GitHub
 secrets** that wire them in.
@@ -202,20 +212,97 @@ Manual run without a tag: **Actions → Android Release → Run workflow**.
 
 ## Step 5 — Install on a phone
 
-On success the APK is live at:
+There is no public link to paste. On the phone:
+
+1. Open **missingtable.com** in Chrome and **log in** — the download endpoint
+   requires authentication.
+2. Tap **Install the Android app** in the footer. The page calls
+   `GET /api/android/apk-url` and follows the presigned URL it returns.
+3. Chrome downloads the `.apk` (~47 MB).
+4. Tap it → Android asks to **allow installs from unknown sources** → allow → Install.
+
+Updates: push a new tag, then repeat the same steps. The signature is
+unchanged, so it upgrades in place and app data survives.
+
+> ⏱️ **The presigned URL expires in 5 minutes** (`ANDROID_APK_URL_TTL_SECONDS`
+> in `backend/r2_client.py`). That is enough time on any normal connection, but
+> the download must *start* inside the window, and a transfer that dies partway
+> cannot be resumed against the expired link — go back to the footer button and
+> mint a fresh one. Worth knowing before doing this on field wifi.
+
+### Verifying a release without a phone
+
+The whole chain can be checked from a laptop, which is how you confirm the
+pipeline published a good artifact before trying to install it:
+
+```bash
+# 1. authenticate (any MT account)
+curl -sS -X POST https://api.missingtable.com/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"<user>","password":"<pass>"}'
+
+# 2. mint a presigned URL — returns download_url, version_code, min_version_code
+curl -sS -H "Authorization: Bearer <access_token>" \
+  https://api.missingtable.com/api/android/apk-url
+
+# 3. download and inspect what the phone would actually get
+curl -sS -o mt.apk "<download_url>"
+$ANDROID_HOME/build-tools/36.1.0/aapt2 dump badging mt.apk | head -1
+$ANDROID_HOME/build-tools/36.1.0/apksigner verify --print-certs mt.apk
+```
+
+A good release looks like:
 
 ```
-https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk
+package: name='com.missingtable.scorer' versionCode='8' versionName='0.2.3'
+Verifies — v2 scheme true, 1 signer
+Signer #1 certificate DN: CN=Tom Drake, OU=silverbeer, O=missingtable
 ```
 
-That's exactly what the MT web-UI footer button links to. On the phone:
+`versionCode` must match the release run number, and `min_version_code` should
+be the run number of the *previous* build (keep-last-2 history, SB-327). If the
+signer DN ever changes, stop — a different key means phones cannot upgrade in
+place and must uninstall first.
 
-1. Open the link (or tap **Install the Android app** on missingtable.com).
-2. Chrome downloads the `.apk`.
-3. Tap it → Android asks to **allow installs from unknown sources** → allow → Install.
+---
 
-Updates: push a new tag, then re-download/re-install (same signature, so it
-upgrades in place).
+## Match-day runbook (SB-593)
+
+For getting a build onto the scoring phone before a match, including a
+mid-week rebuild after a fix lands.
+
+**Do this the day before, not on the way to the field.** The install needs a
+logged-in browser session, an unknown-sources prompt, and a 47 MB download —
+none of which you want to discover is broken at kickoff.
+
+| Step | Command / action | Expect |
+|------|------------------|--------|
+| 1 | `git checkout main && git pull` | clean tree |
+| 2 | bump `versionName` in `app/build.gradle.kts` if the change is user-visible | — |
+| 3 | `git tag vX.Y.Z && git push origin vX.Y.Z` | Actions → **Android Release** starts |
+| 4 | watch the run | `build` → `smoke` → `publish` all green |
+| 5 | verify from the laptop (Step 5 above) | `versionCode` = run number, signer DN unchanged |
+| 6 | on the phone: missingtable.com → log in → footer → install | upgrades in place |
+| 7 | open the app, log in, check Matches and the live screen | real data renders |
+
+A red **smoke** job blocks the publish entirely (SB-353), so a launch-crashing
+build never reaches a phone — but it also means *no new APK was uploaded* and
+`latest/` still holds the previous build. Check which one the phone has before
+assuming a fix shipped.
+
+**Rollback.** There is no rollback button. `latest/` is a stable overwrite key
+and build history keeps only the last 2 (SB-327), so the recovery path is to
+fix forward with a new tag. If the phone already has a bad build, the previous
+`builds/<run>.apk` is still in the bucket — but reaching it needs R2
+credentials, not the app's presigned endpoint, which always points at
+`latest/`.
+
+**Force upgrade.** The app hard-blocks any build older than
+`min_version_code`, which the release job sets to the *previous* build's run
+number (SB-328). Consequence: a phone may lag at most one release. Skip two
+releases and the app refuses to start until it is updated — so if the scoring
+phone has been sitting in a drawer, update it before match day rather than at
+the field.
 
 ---
 
@@ -232,6 +319,18 @@ upgrades in place).
 - **Provider vs upload creds** — the Cloudflare *API token* that manages the
   bucket (Terraform, in the bootstrap repo) is a **different** credential from the
   R2 *S3 access keys* used here for uploads. Don't mix them.
+- **`pub-…r2.dev/latest/missingtable.apk` returns 401** — expected, not a fault.
+  The bucket is private by design and the managed r2.dev domain is pinned to
+  `enabled = false` in Terraform. Use the authenticated
+  `GET /api/android/apk-url` path instead. Any doc, bookmark or QR code still
+  pointing at the r2.dev address is stale.
+- **`/api/android/apk-url` returns 503** — the backend's R2 credentials are
+  missing or wrong (`r2_client.is_configured()` is false). The real reason is
+  in the backend logs; the client-facing message is deliberately generic. See
+  `missing-table/scripts/set-r2-aws-secret.sh`.
+- **Download dies partway on the phone** — the presigned URL has a 5 minute
+  TTL and cannot be resumed once expired. Re-tap the footer button for a fresh
+  one rather than retrying the old link.
 
 ### Rotating
 
@@ -242,9 +341,15 @@ upgrades in place).
   users must uninstall/reinstall. Treat the Step-1 keystore as permanent; that's
   why it lives in 1Password.
 
-### Branded download URL (later)
+### Branded download URL (probably never)
 
-The public URL is Cloudflare's `r2.dev` domain. To serve it from
-`downloads.missingtable.com`, the `missingtable.com` DNS zone must move to
-Cloudflare, then bind an R2 custom domain (bootstrap repo). Until then the
-`r2.dev` URL is fine and the web-UI button hides it behind a click.
+An earlier plan was to serve the APK from `downloads.missingtable.com`, which
+would need the `missingtable.com` DNS zone moved to Cloudflare and an R2 custom
+domain bound (bootstrap repo).
+
+That plan assumed a *public* bucket. It no longer applies: MT is invite-only,
+the bucket is private, and downloads are authenticated per user. A branded
+public hostname would reintroduce exactly the anonymous access the presigned
+flow exists to prevent. If a friendlier link is ever wanted, it should be a
+route on the app's own domain that redirects to a freshly-minted presigned URL
+— not a public R2 domain.
