@@ -58,7 +58,7 @@ gh run watch "$RID" --exit-status
 ## 4. Verify the release did ALL of its jobs
 
 ```bash
-gh run view "$RID" --log | grep -E "minversioncode=[0-9]|Pruning|Published:"
+gh run view "$RID" --log | grep -E "minversioncode=[0-9]|Pruning|Published build"
 ```
 
 Must show: `minversioncode=<previous build>` (force-upgrade floor moved up,
