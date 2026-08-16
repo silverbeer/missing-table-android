@@ -87,6 +87,8 @@ data class LiveMatchState(
     @SerialName("home_team_name") val homeTeamName: String = "Home",
     @SerialName("away_team_id") val awayTeamId: Int? = null,
     @SerialName("away_team_name") val awayTeamName: String = "Away",
+    // Drives the default half length offered at kickoff (SB-645).
+    @SerialName("age_group_name") val ageGroupName: String? = null,
     @SerialName("recent_events") val recentEvents: List<MatchEvent> = emptyList(),
 )
 

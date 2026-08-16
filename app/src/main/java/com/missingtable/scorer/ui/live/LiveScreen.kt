@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudUpload
@@ -33,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -56,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
@@ -66,6 +69,7 @@ import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.domain.HalfDuration
 import com.missingtable.scorer.domain.LiveClock
 import java.time.Instant
 import java.util.UUID
@@ -102,6 +106,7 @@ fun LiveScreen(
     var flow by remember { mutableStateOf<ActionFlow>(ActionFlow.None) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
+    var startDialog by remember { mutableStateOf(false) }
     var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -235,20 +240,13 @@ fun LiveScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "Clock actions")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        listOf(35, 40, 45).forEach { dur ->
-                            DropdownMenuItem(
-                                text = { Text("Start match (${dur}m halves)") },
-                                onClick = {
-                                    menuOpen = false
-                                    act("Match started") {
-                                        repo.enqueueClock(
-                                            matchId,
-                                            ClockRequest("start_first_half", dur, Instant.now().toString()),
-                                        )
-                                    }
-                                },
-                            )
-                        }
+                        DropdownMenuItem(
+                            text = { Text("Start match…") },
+                            onClick = {
+                                menuOpen = false
+                                startDialog = true
+                            },
+                        )
                         DropdownMenuItem(text = { Text("Halftime") }, onClick = {
                             menuOpen = false
                             act("Halftime") {
@@ -452,6 +450,85 @@ fun LiveScreen(
                 }
             }
         }
+    }
+
+    if (startDialog) {
+        // Pre-selected from the age group, but every field stays editable —
+        // a U15 side may play shorter halves in a tournament or friendly, and
+        // the old fixed 35/40/45 menu could not express that at all (SB-645).
+        val default = HalfDuration.defaultFor(s?.ageGroupName)
+        var minutes by remember(startDialog) { mutableStateOf(default) }
+        var typed by remember(startDialog) { mutableStateOf(default.toString()) }
+        val parsed = typed.toIntOrNull()
+        val valid = HalfDuration.isValid(parsed)
+
+        AlertDialog(
+            onDismissRequest = { startDialog = false },
+            title = { Text("Start match") },
+            text = {
+                Column {
+                    Text(
+                        "Half length" + (s?.ageGroupName?.let { " · $it" } ?: ""),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        HalfDuration.PRESETS.forEach { preset ->
+                            FilterChip(
+                                selected = parsed == preset,
+                                onClick = {
+                                    minutes = preset
+                                    typed = preset.toString()
+                                },
+                                label = { Text("$preset · ${HalfDuration.presetLabel(preset)}") },
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it.filter(Char::isDigit).take(2) },
+                        label = { Text("Minutes per half") },
+                        singleLine = true,
+                        isError = typed.isNotEmpty() && !valid,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                    )
+                    Text(
+                        if (valid) "= ${parsed!! * 2} min total" else "Must be ${HalfDuration.MIN}–${HalfDuration.MAX}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (valid) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        startDialog = false
+                        val dur = parsed ?: default
+                        act("Match started (${dur}m halves)") {
+                            repo.enqueueClock(
+                                matchId,
+                                ClockRequest("start_first_half", dur, Instant.now().toString()),
+                            )
+                        }
+                    },
+                ) { Text("Start match") }
+            },
+            dismissButton = { TextButton(onClick = { startDialog = false }) { Text("Cancel") } },
+        )
     }
 
     if (confirmEnd) {
