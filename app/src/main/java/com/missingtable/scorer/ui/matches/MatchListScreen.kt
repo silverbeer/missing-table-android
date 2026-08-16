@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
+import com.missingtable.scorer.domain.MatchBucketing
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,10 +75,7 @@ fun MatchListScreen(
     }
 
     val today = LocalDate.now().toString()
-    val live = matches.filter { it.matchStatus == "live" }
-    val todays = matches.filter { it.matchStatus == "scheduled" && it.matchDate == today }
-    val upcoming = matches.filter { it.matchStatus == "scheduled" && it.matchDate > today }.sortedBy { it.matchDate }
-    val recent = matches.filter { it.matchStatus == "completed" }.sortedByDescending { it.matchDate }.take(10)
+    val buckets = MatchBucketing.bucket(matches, today)
 
     Scaffold(
         topBar = {
@@ -129,10 +127,14 @@ fun MatchListScreen(
             if (error != null) {
                 item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) }
             }
-            section("LIVE NOW", live, onOpenMatch, highlight = true)
-            section("TODAY", todays, onOpenMatch)
-            section("UPCOMING", upcoming, onOpenMatch)
-            section("RECENT", recent, onOpenMatch)
+            section("LIVE NOW", buckets.live, onOpenMatch, highlight = true)
+            // Above TODAY on purpose: an unscored match from a past date is
+            // the thing most likely to need action right now (SB-641).
+            section("NEEDS SCORING", buckets.needsScoring, onOpenMatch, highlight = true)
+            section("TODAY", buckets.todays, onOpenMatch)
+            section("UPCOMING", buckets.upcoming, onOpenMatch)
+            section("RECENT", buckets.recent, onOpenMatch)
+            section("POSTPONED / OTHER", buckets.other, onOpenMatch)
         }
     }
 }
