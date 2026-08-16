@@ -139,7 +139,12 @@ jobs:
           aws s3 cp "$apk" "s3://mt-android-releases/latest/missingtable.apk" \
             --endpoint-url "$endpoint" --content-type "$ct" \
             --metadata "versioncode=${{ github.run_number }},minversioncode=$min"
-          echo "Published: https://pub-aacd08f9e26c407d84191373d808d1c4.r2.dev/latest/missingtable.apk"
+          # The bucket is private (MT is invite-only) and the r2.dev managed
+          # domain is disabled in Terraform, so there is no public link to
+          # print here. Phones install via an authenticated presigned URL:
+          # missingtable.com -> footer -> GET /api/android/apk-url.
+          echo "Published build ${{ github.run_number }} to s3://mt-android-releases/latest/missingtable.apk"
+          echo "Install path: log in at missingtable.com -> footer 'Install the Android app'"
 
           # Prune build history — keep only the newest 2 (SB-327). latest/ is
           # a stable overwrite key and is never touched here.
