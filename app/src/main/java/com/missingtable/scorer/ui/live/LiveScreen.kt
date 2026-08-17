@@ -69,6 +69,7 @@ import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
 import com.missingtable.scorer.domain.LiveClock
 import java.time.Instant
@@ -104,6 +105,10 @@ fun LiveScreen(
     var rosters by remember { mutableStateOf<Map<Int, List<RosterPlayer>>>(emptyMap()) }
     var starters by remember { mutableStateOf<Map<Int, Set<Int>>>(emptyMap()) }
     var flow by remember { mutableStateOf<ActionFlow>(ActionFlow.None) }
+    // Minute captured when an entry flow STARTS (SB-652). Reading the clock at
+    // the end of the flow would stamp however long the pickers took onto the
+    // event — worst exactly when the match is busiest.
+    var stamp by remember { mutableStateOf(EventStamp.UNKNOWN) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
     var startDialog by remember { mutableStateOf(false) }
@@ -206,6 +211,30 @@ fun LiveScreen(
             cur.kickoffTime, cur.halftimeStart, cur.secondHalfStart, cur.matchEndTime, cur.halfDuration
         )
     }
+
+    /**
+     * Open an entry flow, stamping the minute now (SB-652). Every event type
+     * goes through here so goals, cards and subs all record the minute of the
+     * first tap rather than the last.
+     */
+    fun beginFlow(next: ActionFlow) {
+        stamp = EventStamp.from(tapMinute())
+        flow = next
+    }
+
+    /** Close an entry flow and drop its stamp so a restart re-reads the clock. */
+    fun endFlow() {
+        flow = ActionFlow.None
+        stamp = EventStamp.UNKNOWN
+    }
+
+    /**
+     * "Goal recorded 23'" — say what minute was captured, not just that it was.
+     * Takes the stamp explicitly: callers snapshot it before ending the flow,
+     * which clears it.
+     */
+    fun stamped(at: EventStamp, label: String): String =
+        at.label()?.let { "$label $it" } ?: label
 
     val s = state
     Scaffold(
@@ -361,22 +390,22 @@ fun LiveScreen(
             if (!readOnly) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GoalButton(s.homeTeamName, Modifier.weight(1f)) {
-                        s.homeTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                        s.homeTeamId?.let { beginFlow(ActionFlow.GoalPickScorer(it)) }
                     }
                     GoalButton(s.awayTeamName, Modifier.weight(1f)) {
-                        s.awayTeamId?.let { flow = ActionFlow.GoalPickScorer(it) }
+                        s.awayTeamId?.let { beginFlow(ActionFlow.GoalPickScorer(it)) }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { flow = ActionFlow.SubPickTeam },
+                        onClick = { beginFlow(ActionFlow.SubPickTeam) },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
                     ) { Text("SUB") }
                     OutlinedButton(
-                        onClick = { flow = ActionFlow.CardPickTeam },
+                        onClick = { beginFlow(ActionFlow.CardPickTeam) },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
@@ -551,10 +580,10 @@ fun LiveScreen(
     // Action bottom sheets
     val currentFlow = flow
     if (currentFlow != ActionFlow.None && s != null) {
-        ModalBottomSheet(onDismissRequest = { flow = ActionFlow.None }) {
+        ModalBottomSheet(onDismissRequest = { endFlow() }) {
             when (currentFlow) {
                 is ActionFlow.GoalPickScorer -> PlayerPickSheet(
-                    title = "Who scored?",
+                    title = stamped(stamp, "Who scored?"),
                     players = rosters[currentFlow.teamId].orEmpty(),
                     allowFreeText = true,
                     onPick = { player, freeText ->
@@ -563,30 +592,30 @@ fun LiveScreen(
                 )
 
                 is ActionFlow.GoalPickAssist -> PlayerPickSheet(
-                    title = "Assist?",
+                    title = stamped(stamp, "Assist?"),
                     players = rosters[currentFlow.teamId].orEmpty().filter { it.id != currentFlow.scorer?.id },
                     extraOption = "NO ASSIST",
                     onExtra = {
-                        flow = ActionFlow.None
-                        val tap = tapMinute()
-                        act("Goal recorded") {
+                        val at = stamp
+                        endFlow()
+                        act(stamped(at, "Goal recorded")) {
                             repo.enqueueGoal(
                                 matchId,
                                 GoalRequest(
                                     teamId = currentFlow.teamId,
                                     playerId = currentFlow.scorer?.id,
                                     playerName = currentFlow.scorerName,
-                                    matchMinute = tap.minute,
-                                    extraTime = tap.extraTime,
+                                    matchMinute = at.minute,
+                                    extraTime = at.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )
                         }
                     },
                     onPick = { assist, _ ->
-                        flow = ActionFlow.None
-                        val tap = tapMinute()
-                        act("Goal recorded") {
+                        val at = stamp
+                        endFlow()
+                        act(stamped(at, "Goal recorded")) {
                             repo.enqueueGoal(
                                 matchId,
                                 GoalRequest(
@@ -594,8 +623,8 @@ fun LiveScreen(
                                     playerId = currentFlow.scorer?.id,
                                     playerName = currentFlow.scorerName,
                                     assistPlayerId = assist?.id,
-                                    matchMinute = tap.minute,
-                                    extraTime = tap.extraTime,
+                                    matchMinute = at.minute,
+                                    extraTime = at.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )
@@ -609,7 +638,7 @@ fun LiveScreen(
                     val teamRoster = rosters[currentFlow.teamId].orEmpty()
                     val pitch = onPitch(currentFlow.teamId)
                     PlayerPickSheet(
-                        title = "Player OFF",
+                        title = stamped(stamp, "Player OFF"),
                         players = if (pitch != null) teamRoster.filter { it.id in pitch } else teamRoster,
                         onPick = { out, _ ->
                             if (out != null) flow = ActionFlow.SubPickIn(currentFlow.teamId, out)
@@ -627,20 +656,24 @@ fun LiveScreen(
                     },
                     onPick = { inn, _ ->
                         if (inn != null) {
+                            val at = stamp
                             // Multi-sub fast path (SB-282): chain straight back
                             // to Player OFF for the same team — halftime swaps
                             // are 3-4 subs in a row. Dismiss the sheet to stop.
-                            flow = ActionFlow.SubPickOut(currentFlow.teamId)
-                            val tap = tapMinute()
-                            act("Substitution recorded") {
+                            // beginFlow re-stamps: the next sub is a new event,
+                            // so it gets its own minute rather than inheriting
+                            // this one (SB-652).
+                            beginFlow(ActionFlow.SubPickOut(currentFlow.teamId))
+
+                            act(stamped(at, "Substitution recorded")) {
                                 repo.enqueueSubstitution(
                                     matchId,
                                     SubstitutionRequest(
                                         teamId = currentFlow.teamId,
                                         playerInId = inn.id,
                                         playerOutId = currentFlow.out.id,
-                                        matchMinute = tap.minute,
-                                        extraTime = tap.extraTime,
+                                        matchMinute = at.minute,
+                                        extraTime = at.extraTime,
                                         clientEventId = UUID.randomUUID().toString(),
                                     ),
                                 )
@@ -676,9 +709,9 @@ fun LiveScreen(
                     players = rosters[currentFlow.teamId].orEmpty(),
                     allowFreeText = true,
                     onPick = { player, freeText ->
-                        flow = ActionFlow.None
-                        val tap = tapMinute()
-                        act("Card recorded") {
+                        val at = stamp
+                        endFlow()
+                        act(stamped(at, "Card recorded")) {
                             repo.enqueueCard(
                                 matchId,
                                 CardRequest(
@@ -686,8 +719,8 @@ fun LiveScreen(
                                     playerId = player?.id,
                                     playerName = freeText,
                                     cardType = currentFlow.cardType,
-                                    matchMinute = tap.minute,
-                                    extraTime = tap.extraTime,
+                                    matchMinute = at.minute,
+                                    extraTime = at.extraTime,
                                     clientEventId = UUID.randomUUID().toString(),
                                 ),
                             )
