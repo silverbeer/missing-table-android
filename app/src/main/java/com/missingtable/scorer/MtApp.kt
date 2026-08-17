@@ -9,6 +9,7 @@ import com.missingtable.scorer.data.api.MtApi
 import com.missingtable.scorer.data.api.TokenAuthenticator
 import com.missingtable.scorer.data.auth.TokenStore
 import com.missingtable.scorer.data.db.MtDatabase
+import com.missingtable.scorer.data.prefs.UiPrefs
 import com.missingtable.scorer.data.repo.LiveMatchRepository
 import com.missingtable.scorer.data.sync.ConnectivityWatcher
 import com.missingtable.scorer.data.sync.SyncEngine
@@ -63,6 +64,9 @@ class AppContainer(app: Application) {
     val connectivity = ConnectivityWatcher(app) { syncEngine.kick() }
 
     val liveRepo = LiveMatchRepository(db.pendingActionDao(), syncEngine, json, app)
+
+    /** Persisted UI choices (SB-642) — survives logout, unlike the auth store. */
+    val uiPrefs = UiPrefs(app)
 
     // Current season (SB-338): one lookup per process. /api/matches does NOT
     // default to the current season server-side, so every match/tournament

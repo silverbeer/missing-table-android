@@ -1,6 +1,8 @@
 package com.missingtable.scorer.ui.matches
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -22,10 +25,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +40,7 @@ import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.domain.MatchBucketing
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +56,19 @@ fun MatchListScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
+
+    // Age-group filter (SB-642). Applied client-side to the already-fetched
+    // window rather than as a query param: instant, works with no signal, and
+    // no refetch per tap — which matters at a pitch far more than it would on
+    // a desk. The fetch is already bounded by season + a 90-day window.
+    val scope = rememberCoroutineScope()
+    val savedAgeGroup by container.uiPrefs.matchesAgeGroup.collectAsState(initial = null)
+    var ageGroupTouched by remember { mutableStateOf(false) }
+    var ageGroup by remember { mutableStateOf<Int?>(null) }
+    // Adopt the persisted choice once, on first emission, then let taps win.
+    LaunchedEffect(savedAgeGroup) {
+        if (!ageGroupTouched) ageGroup = savedAgeGroup
+    }
 
     LaunchedEffect(reloadKey) {
         loading = true
@@ -75,7 +94,14 @@ fun MatchListScreen(
     }
 
     val today = LocalDate.now().toString()
-    val buckets = MatchBucketing.bucket(matches, today)
+    // Chips are built from what's actually in the list, so an age group only
+    // appears when there is something to show for it.
+    val ageGroupOptions = matches
+        .mapNotNull { m -> m.ageGroupId?.let { it to (m.ageGroupName ?: "U?") } }
+        .distinct()
+        .sortedBy { it.second }
+    val visible = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
+    val buckets = MatchBucketing.bucket(visible, today)
 
     Scaffold(
         topBar = {
@@ -106,6 +132,40 @@ fun MatchListScreen(
                 .padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Only worth showing when there is more than one age group to
+            // choose between (SB-642).
+            if (ageGroupOptions.size > 1) {
+                item {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = ageGroup == null,
+                            onClick = {
+                                ageGroupTouched = true
+                                ageGroup = null
+                                scope.launch { container.uiPrefs.setMatchesAgeGroup(null) }
+                            },
+                            label = { Text("All") },
+                        )
+                        ageGroupOptions.forEach { (id, name) ->
+                            FilterChip(
+                                selected = ageGroup == id,
+                                onClick = {
+                                    ageGroupTouched = true
+                                    ageGroup = id
+                                    scope.launch { container.uiPrefs.setMatchesAgeGroup(id) }
+                                },
+                                label = { Text(name) },
+                            )
+                        }
+                    }
+                }
+            }
             if (updateAvailable) {
                 item {
                     Card(
@@ -135,6 +195,19 @@ fun MatchListScreen(
             section("UPCOMING", buckets.upcoming, onOpenMatch)
             section("RECENT", buckets.recent, onOpenMatch)
             section("POSTPONED / OTHER", buckets.other, onOpenMatch)
+            // An active filter hiding everything must say so — otherwise an
+            // empty list reads as "nothing loaded" (SB-642).
+            if (buckets.size == 0 && matches.isNotEmpty() && ageGroup != null) {
+                item {
+                    Text(
+                        "No matches for this age group. Tap All to see the other " +
+                            "${matches.size} in this window.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
+            }
         }
     }
 }
