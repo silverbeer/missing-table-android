@@ -69,9 +69,11 @@ import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.domain.ClockStage
 import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
 import com.missingtable.scorer.domain.LiveClock
+import com.missingtable.scorer.domain.MatchClock
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -268,33 +270,15 @@ fun LiveScreen(
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Clock actions")
                     }
+                    // Corrections only (SB-653). The normal run of play —
+                    // start, halftime, 2nd half, full time — is the primary
+                    // button on the scoreboard, so this menu no longer offers
+                    // a list of mostly-invalid actions with "Halftime" sitting
+                    // next to "Back to 1st half".
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Start match…") },
-                            onClick = {
-                                menuOpen = false
-                                startDialog = true
-                            },
-                        )
-                        DropdownMenuItem(text = { Text("Halftime") }, onClick = {
-                            menuOpen = false
-                            act("Halftime") {
-                                repo.enqueueClock(matchId, ClockRequest("start_halftime", occurredAt = Instant.now().toString()))
-                            }
-                        })
                         DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
                             menuOpen = false
                             act("Back to 1st half") { repo.enqueueClock(matchId, ClockRequest("cancel_halftime")) }
-                        })
-                        DropdownMenuItem(text = { Text("Start 2nd half") }, onClick = {
-                            menuOpen = false
-                            act("2nd half started") {
-                                repo.enqueueClock(matchId, ClockRequest("start_second_half", occurredAt = Instant.now().toString()))
-                            }
-                        })
-                        DropdownMenuItem(text = { Text("End match") }, onClick = {
-                            menuOpen = false
-                            confirmEnd = true
                         })
                         DropdownMenuItem(text = { Text("Reopen match") }, onClick = {
                             menuOpen = false
@@ -384,6 +368,38 @@ fun LiveScreen(
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.titleMedium,
                 )
+            }
+
+            // The next clock action, on the scoreboard rather than two taps
+            // deep in the overflow (SB-653). One valid action at a time; the
+            // corrections (back to 1st half, reopen) stay in the menu.
+            if (!readOnly) {
+                val stage = MatchClock.stage(
+                    s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
+                )
+                if (stage.hasPrimaryAction) {
+                    Button(
+                        onClick = {
+                            when (stage) {
+                                // Starting needs the half-length dialog (SB-645).
+                                ClockStage.NOT_STARTED -> startDialog = true
+                                ClockStage.SECOND_HALF -> confirmEnd = true
+                                else -> MatchClock.primaryAction(stage)?.let { action ->
+                                    act(stage.label) {
+                                        repo.enqueueClock(
+                                            matchId,
+                                            ClockRequest(action, occurredAt = Instant.now().toString()),
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                    ) { Text(stage.label) }
+                    Spacer(Modifier.height(8.dp))
+                }
             }
 
             // Goal buttons (scorer only)
