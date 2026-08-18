@@ -52,6 +52,10 @@ data class MatchSummary(
     @SerialName("age_group_id") val ageGroupId: Int? = null,
     @SerialName("age_group_name") val ageGroupName: String? = null,
     @SerialName("match_type_name") val matchTypeName: String? = null,
+    // Shown on the row so a League fixture's competition is visible when
+    // several leagues/divisions are in the same list (SB-681).
+    @SerialName("league_name") val leagueName: String? = null,
+    @SerialName("division_name") val divisionName: String? = null,
     @SerialName("match_status") val matchStatus: String? = null,
 )
 
