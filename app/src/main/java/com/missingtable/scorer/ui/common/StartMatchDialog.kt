@@ -39,15 +39,20 @@ fun StartMatchDialog(
     ageGroupName: String?,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit,
+    // Reused to CORRECT the length mid-match (SB-678), where the wording and
+    // the starting value differ but the picker is identical.
+    title: String = "Start match",
+    confirmLabel: String = "Start match",
+    initial: Int? = null,
 ) {
-    val default = HalfDuration.defaultFor(ageGroupName)
+    val default = initial ?: HalfDuration.defaultFor(ageGroupName)
     var typed by remember { mutableStateOf(default.toString()) }
     val parsed = typed.toIntOrNull()
     val valid = HalfDuration.isValid(parsed)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Start match") },
+        title = { Text(title) },
         text = {
             Column {
                 Text(
@@ -96,7 +101,7 @@ fun StartMatchDialog(
             TextButton(
                 enabled = valid,
                 onClick = { onConfirm(parsed ?: default) },
-            ) { Text("Start match") }
+            ) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
