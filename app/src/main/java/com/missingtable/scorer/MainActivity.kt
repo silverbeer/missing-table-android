@@ -116,7 +116,8 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                             navController.navigate("live/${match.id}?readOnly=true&$common")
                         match.matchStatus == "scheduled" -> {
                             val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
-                                "&awayName=${android.net.Uri.encode(match.awayTeamName)}"
+                                "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
+                                "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
                             navController.navigate(
                                 "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
                             )
@@ -136,7 +137,7 @@ private fun AppNav(container: AppContainer, startDestination: String) {
             )
         }
         composable(
-            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}"
+            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}"
         ) { entry ->
             val args = entry.arguments
             val matchId = args?.getString("matchId")?.toIntOrNull() ?: return@composable
@@ -152,12 +153,20 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 awayTeamId = awayId,
                 awayTeamName = args.getString("awayName") ?: "Away",
                 seasonId = seasonId,
+                ageGroupName = args.getString("ageGroupName")?.takeIf { it.isNotBlank() },
+                alreadyStarted = args.getString("started") == "true",
                 onBack = { navController.popBackStack() },
                 onStartMatch = {
-                    navController.navigate(
-                        "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
-                    ) {
-                        popUpTo("matches")
+                    // Arrived from the live screen (SB-677): go back to it
+                    // rather than stacking a second copy.
+                    if (args.getString("started") == "true") {
+                        navController.popBackStack()
+                    } else {
+                        navController.navigate(
+                            "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
+                        ) {
+                            popUpTo("matches")
+                        }
                     }
                 },
             )
@@ -191,6 +200,17 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 seasonId = seasonId,
                 ageGroupId = ageGroupId,
                 onBack = { navController.popBackStack() },
+                onOpenLineup = { st ->
+                    // started=true so the lineup screen offers BACK TO MATCH
+                    // rather than a second kickoff (SB-677).
+                    val names = "homeName=${android.net.Uri.encode(st.homeTeamName)}" +
+                        "&awayName=${android.net.Uri.encode(st.awayTeamName)}" +
+                        "&ageGroupName=${android.net.Uri.encode(st.ageGroupName ?: "")}"
+                    navController.navigate(
+                        "lineup/$matchId?homeId=${st.homeTeamId}&awayId=${st.awayTeamId}&$names" +
+                            "&seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}&started=true"
+                    )
+                },
                 readOnly = readOnly,
             )
         }
