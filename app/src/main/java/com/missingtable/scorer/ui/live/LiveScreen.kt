@@ -69,6 +69,7 @@ import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.ClockStage
 import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
@@ -99,6 +100,9 @@ fun LiveScreen(
     seasonId: Int?,
     ageGroupId: Int?,
     onBack: () -> Unit,
+    // Reaching the lineup after kickoff (SB-677) — forgetting it before the
+    // whistle must not lock it away for the rest of the match.
+    onOpenLineup: (LiveMatchState) -> Unit = {},
     // Fan view (SB-320): scoreboard + clock + timeline only — no scoring
     // controls, no clock menu, no deletes, no queue affordances.
     readOnly: Boolean = false,
@@ -276,6 +280,10 @@ fun LiveScreen(
                     // a list of mostly-invalid actions with "Halftime" sitting
                     // next to "Back to 1st half".
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Lineup…") }, onClick = {
+                            menuOpen = false
+                            s?.let(onOpenLineup)
+                        })
                         DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
                             menuOpen = false
                             act("Back to 1st half") { repo.enqueueClock(matchId, ClockRequest("cancel_halftime")) }
@@ -498,81 +506,20 @@ fun LiveScreen(
     }
 
     if (startDialog) {
-        // Pre-selected from the age group, but every field stays editable —
-        // a U15 side may play shorter halves in a tournament or friendly, and
-        // the old fixed 35/40/45 menu could not express that at all (SB-645).
-        val default = HalfDuration.defaultFor(s?.ageGroupName)
-        var minutes by remember(startDialog) { mutableStateOf(default) }
-        var typed by remember(startDialog) { mutableStateOf(default.toString()) }
-        val parsed = typed.toIntOrNull()
-        val valid = HalfDuration.isValid(parsed)
-
-        AlertDialog(
-            onDismissRequest = { startDialog = false },
-            title = { Text("Start match") },
-            text = {
-                Column {
-                    Text(
-                        "Half length" + (s?.ageGroupName?.let { " · $it" } ?: ""),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        HalfDuration.PRESETS.forEach { preset ->
-                            FilterChip(
-                                selected = parsed == preset,
-                                onClick = {
-                                    minutes = preset
-                                    typed = preset.toString()
-                                },
-                                label = { Text("$preset · ${HalfDuration.presetLabel(preset)}") },
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        value = typed,
-                        onValueChange = { typed = it.filter(Char::isDigit).take(2) },
-                        label = { Text("Minutes per half") },
-                        singleLine = true,
-                        isError = typed.isNotEmpty() && !valid,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp),
-                    )
-                    Text(
-                        if (valid) "= ${parsed!! * 2} min total" else "Must be ${HalfDuration.MIN}–${HalfDuration.MAX}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (valid) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        },
-                        modifier = Modifier.padding(top = 4.dp),
+        // Shared with the Lineup screen (SB-676) so both start paths offer the
+        // same presets, the same age-group default and the same override.
+        StartMatchDialog(
+            ageGroupName = s?.ageGroupName,
+            onDismiss = { startDialog = false },
+            onConfirm = { dur ->
+                startDialog = false
+                act("Match started (${dur}m halves)") {
+                    repo.enqueueClock(
+                        matchId,
+                        ClockRequest("start_first_half", dur, Instant.now().toString()),
                     )
                 }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = valid,
-                    onClick = {
-                        startDialog = false
-                        val dur = parsed ?: default
-                        act("Match started (${dur}m halves)") {
-                            repo.enqueueClock(
-                                matchId,
-                                ClockRequest("start_first_half", dur, Instant.now().toString()),
-                            )
-                        }
-                    },
-                ) { Text("Start match") }
-            },
-            dismissButton = { TextButton(onClick = { startDialog = false }) { Text("Cancel") } },
         )
     }
 

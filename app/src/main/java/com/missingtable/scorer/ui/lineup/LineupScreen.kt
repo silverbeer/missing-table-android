@@ -71,6 +71,7 @@ import com.missingtable.scorer.data.api.LineupPosition
 import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.domain.Formations
+import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.Positions
 import kotlinx.coroutines.launch
 
@@ -89,9 +90,15 @@ fun LineupScreen(
     awayTeamId: Int,
     awayTeamName: String,
     seasonId: Int?,
+    // Drives the half-length default when starting from here (SB-676).
+    ageGroupName: String? = null,
+    // True once the match is under way — starting again is not on offer,
+    // returning to it is (SB-677).
+    alreadyStarted: Boolean = false,
     onBack: () -> Unit,
     onStartMatch: () -> Unit,
 ) {
+    var startDialog by remember { mutableStateOf(false) }
     var teamId by remember { mutableStateOf(homeTeamId) }
     val teamName = if (teamId == homeTeamId) homeTeamName else awayTeamName
     var roster by remember { mutableStateOf<List<RosterPlayer>>(emptyList()) }
@@ -726,28 +733,44 @@ fun LineupScreen(
                 ) { Text("Save lineup") }
                 Button(
                     onClick = {
-                        save(showConfirmation = false) {
-                            scope.launch {
-                                runCatching {
-                                    container.liveRepo.enqueueClock(
-                                        matchId,
-                                        ClockRequest(
-                                            "start_first_half",
-                                            halfDuration = null,
-                                            occurredAt = java.time.Instant.now().toString(),
-                                        ),
-                                    )
-                                }.onSuccess { onStartMatch() }
-                                    .onFailure { snackbar.showSnackbar("Failed to start match") }
-                            }
-                        }
+                        // Already running: save and go back to it rather than
+                        // offering to start it again (SB-677).
+                        if (alreadyStarted) save(showConfirmation = false) { onStartMatch() }
+                        else startDialog = true
                     },
                     modifier = Modifier
                         .weight(1f)
                         .height(52.dp),
-                ) { Text("START MATCH") }
+                ) { Text(if (alreadyStarted) "BACK TO MATCH" else "START MATCH") }
             }
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    if (startDialog) {
+        StartMatchDialog(
+            ageGroupName = ageGroupName,
+            onDismiss = { startDialog = false },
+            onConfirm = { dur ->
+                startDialog = false
+                // Save the lineup before kickoff — that ordering is the whole
+                // reason this screen has a start button at all.
+                save(showConfirmation = false) {
+                    scope.launch {
+                        runCatching {
+                            container.liveRepo.enqueueClock(
+                                matchId,
+                                ClockRequest(
+                                    "start_first_half",
+                                    halfDuration = dur,
+                                    occurredAt = java.time.Instant.now().toString(),
+                                ),
+                            )
+                        }.onSuccess { onStartMatch() }
+                            .onFailure { snackbar.showSnackbar("Failed to start match") }
+                    }
+                }
+            },
+        )
     }
 }
