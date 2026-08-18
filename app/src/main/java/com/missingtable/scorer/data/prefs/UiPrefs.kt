@@ -1,8 +1,10 @@
 package com.missingtable.scorer.data.prefs
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,6 +30,26 @@ class UiPrefs(private val context: Context) {
         context.uiDataStore.edit { prefs ->
             if (ageGroupId == null) prefs.remove(matchesAgeGroupKey)
             else prefs[matchesAgeGroupKey] = ageGroupId
+        }
+    }
+
+    private val matchesTypeKey = stringPreferencesKey("matches_match_type")
+    private val matchesTypeChosenKey = booleanPreferencesKey("matches_match_type_chosen")
+
+    /** Match-type filter on the Matches tab; null means "All" (SB-681). */
+    val matchesType: Flow<String?> = context.uiDataStore.data.map { it[matchesTypeKey] }
+
+    /**
+     * Whether the user has ever picked a type. Distinguishes "chose All" from
+     * "never chose", which the dynamic default needs to tell apart.
+     */
+    val matchesTypeChosen: Flow<Boolean> =
+        context.uiDataStore.data.map { it[matchesTypeChosenKey] ?: false }
+
+    suspend fun setMatchesType(typeName: String?) {
+        context.uiDataStore.edit { prefs ->
+            if (typeName == null) prefs.remove(matchesTypeKey) else prefs[matchesTypeKey] = typeName
+            prefs[matchesTypeChosenKey] = true
         }
     }
 }

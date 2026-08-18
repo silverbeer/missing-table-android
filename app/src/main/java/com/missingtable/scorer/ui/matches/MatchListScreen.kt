@@ -13,11 +13,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -39,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.domain.MatchBucketing
+import com.missingtable.scorer.domain.MatchTypeFilter
+import com.missingtable.scorer.domain.MatchWeek
 import java.time.LocalDate
 import kotlinx.coroutines.launch
 
@@ -63,6 +67,9 @@ fun MatchListScreen(
     // a desk. The fetch is already bounded by season + a 90-day window.
     val scope = rememberCoroutineScope()
     val savedAgeGroup by container.uiPrefs.matchesAgeGroup.collectAsState(initial = null)
+    val savedType by container.uiPrefs.matchesType.collectAsState(initial = null)
+    val typeChosen by container.uiPrefs.matchesTypeChosen.collectAsState(initial = false)
+    var weekOffset by remember { mutableIntStateOf(0) }
     var ageGroupTouched by remember { mutableStateOf(false) }
     var ageGroup by remember { mutableStateOf<Int?>(null) }
     // Adopt the persisted choice once, on first emission, then let taps win.
@@ -70,19 +77,24 @@ fun MatchListScreen(
         if (!ageGroupTouched) ageGroup = savedAgeGroup
     }
 
-    LaunchedEffect(reloadKey) {
+    LaunchedEffect(reloadKey, weekOffset) {
         loading = true
         error = null
         val today = LocalDate.now()
+        val week = MatchWeek.of(today, weekOffset)
+        // On "This Week" reach further back so NEEDS SCORING keeps its
+        // look-back (SB-641) — an unscored match from an earlier week must not
+        // vanish just because the list is week-scoped. Other weeks fetch only
+        // themselves.
+        val from = if (weekOffset == 0) today.minusDays(60) else week.start
         runCatching {
             container.api.matches(
                 // /api/matches has NO server-side season default — without
                 // this, prior-season matches inside the window leak in
                 // (SB-338). Null (offline) degrades to date-window-only.
                 seasonId = container.currentSeasonId(),
-                // Wide window so the list isn't empty off-season
-                startDate = today.minusDays(60).toString(),
-                endDate = today.plusDays(30).toString(),
+                startDate = from.toString(),
+                endDate = week.end.toString(),
             )
         }.onSuccess {
             matches = it
@@ -94,14 +106,26 @@ fun MatchListScreen(
     }
 
     val today = LocalDate.now().toString()
-    // Chips are built from what's actually in the list, so an age group only
+    val week = MatchWeek.of(LocalDate.now(), weekOffset)
+
+    // Chips are built from what's actually in the list, so a filter only
     // appears when there is something to show for it.
     val ageGroupOptions = matches
         .mapNotNull { m -> m.ageGroupId?.let { it to (m.ageGroupName ?: "U?") } }
         .distinct()
         .sortedBy { it.second }
-    val visible = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
-    val buckets = MatchBucketing.bucket(visible, today)
+    val byAge = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
+
+    val typeOptions = MatchTypeFilter.options(byAge)
+    val activeType = MatchTypeFilter.resolve(byAge, savedType, typeChosen)
+    val typeDropped = typeChosen && MatchTypeFilter.savedChoiceUnavailable(byAge, savedType)
+    val visible = activeType?.let { t -> byAge.filter { it.matchTypeName == t } } ?: byAge
+
+    // Week governs TODAY / UPCOMING / RECENT; NEEDS SCORING keeps the wider
+    // look-back so an overdue match cannot hide behind week navigation.
+    val inWeek = visible.filter { it.matchDate in week }
+    val weekBuckets = MatchBucketing.bucket(inWeek, today)
+    val buckets = weekBuckets.copy(needsScoring = MatchBucketing.bucket(visible, today).needsScoring)
 
     Scaffold(
         topBar = {
@@ -164,6 +188,72 @@ fun MatchListScreen(
                             )
                         }
                     }
+                }
+            }
+            // Match type (SB-681). Chips come from the loaded rows, and the
+            // default follows the data — a fixed "League" would show an empty
+            // list in a preseason where every fixture is a Friendly.
+            if (typeOptions.size > 1) {
+                item {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = activeType == null,
+                            onClick = { scope.launch { container.uiPrefs.setMatchesType(null) } },
+                            label = { Text("All") },
+                        )
+                        typeOptions.forEach { name ->
+                            FilterChip(
+                                selected = activeType == name,
+                                onClick = { scope.launch { container.uiPrefs.setMatchesType(name) } },
+                                label = { Text(name) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Week navigation, Monday-Sunday, matching the web (SB-681).
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = { weekOffset-- }, modifier = Modifier.weight(1f)) {
+                        Text("←")
+                    }
+                    Button(
+                        onClick = { weekOffset = 0 },
+                        enabled = weekOffset != 0,
+                        modifier = Modifier.weight(2f),
+                    ) { Text(if (weekOffset == 0) "This week" else "Back to this week") }
+                    OutlinedButton(onClick = { weekOffset++ }, modifier = Modifier.weight(1f)) {
+                        Text("→")
+                    }
+                }
+            }
+            item {
+                Text(
+                    week.label(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            if (typeDropped) {
+                item {
+                    Text(
+                        "No $savedType matches here — showing all types.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             if (updateAvailable) {
@@ -252,7 +342,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
                     }
                 }
                 Text(
-                    listOfNotNull(m.matchDate, m.ageGroupName, m.matchTypeName).joinToString(" · "),
+                    listOfNotNull(
+                        m.matchDate,
+                        m.ageGroupName,
+                        m.matchTypeName,
+                        // League fixtures span leagues and divisions; naming the
+                        // competition stops two same-age rows looking identical.
+                        m.leagueName?.takeIf { it != "Unknown" },
+                        m.divisionName?.takeIf { it != "Unknown" },
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
