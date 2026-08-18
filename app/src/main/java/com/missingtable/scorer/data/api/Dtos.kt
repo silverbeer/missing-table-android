@@ -380,3 +380,9 @@ data class ClockRequest(
     @SerialName("half_duration") val halfDuration: Int? = null,
     @SerialName("occurred_at") val occurredAt: String? = null,
 )
+
+/** Partial match update (SB-678). Only non-null fields are applied. */
+@Serializable
+data class MatchPatchRequest(
+    @SerialName("half_duration") val halfDuration: Int? = null,
+)

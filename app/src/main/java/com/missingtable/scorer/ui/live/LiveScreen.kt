@@ -66,6 +66,7 @@ import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LiveMatchState
+import com.missingtable.scorer.data.api.MatchPatchRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
@@ -118,6 +119,7 @@ fun LiveScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
     var startDialog by remember { mutableStateOf(false) }
+    var halfLengthDialog by remember { mutableStateOf(false) }
     var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -247,7 +249,20 @@ fun LiveScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(s?.let { "${it.homeTeamName} v ${it.awayTeamName}" } ?: "Match") },
+                title = {
+                    Column {
+                        Text(s?.let { "${it.homeTeamName} v ${it.awayTeamName}" } ?: "Match")
+                        // Match id, small and muted (SB-679). Useless to a
+                        // normal user; decisive when something looks wrong and
+                        // two fixtures share near-identical team names.
+                        Text(
+                            "#$matchId" + (s?.ageGroupName?.let { " · $it" } ?: "") +
+                                (s?.halfDuration?.let { " · ${it}m halves" } ?: ""),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -280,6 +295,10 @@ fun LiveScreen(
                     // a list of mostly-invalid actions with "Halftime" sitting
                     // next to "Back to 1st half".
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Change half length…") }, onClick = {
+                            menuOpen = false
+                            halfLengthDialog = true
+                        })
                         DropdownMenuItem(text = { Text("Lineup…") }, onClick = {
                             menuOpen = false
                             s?.let(onOpenLineup)
@@ -518,6 +537,30 @@ fun LiveScreen(
                         matchId,
                         ClockRequest("start_first_half", dur, Instant.now().toString()),
                     )
+                }
+            },
+        )
+    }
+
+    if (halfLengthDialog) {
+        // Correcting a wrong kickoff choice (SB-678). Online-only: this PATCHes
+        // rather than queueing, because a correction is not time-critical the
+        // way a goal is, and the clock is derived so it takes effect at once.
+        StartMatchDialog(
+            ageGroupName = s?.ageGroupName,
+            initial = s?.halfDuration,
+            title = "Change half length",
+            confirmLabel = "Save",
+            onDismiss = { halfLengthDialog = false },
+            onConfirm = { dur ->
+                halfLengthDialog = false
+                scope.launch {
+                    runCatching { container.api.patchMatch(matchId, MatchPatchRequest(halfDuration = dur)) }
+                        .onSuccess {
+                            refresh()
+                            snackbar.showSnackbar("Half length now ${dur}m")
+                        }
+                        .onFailure { snackbar.showSnackbar("Couldn't change half length — needs a connection") }
                 }
             },
         )

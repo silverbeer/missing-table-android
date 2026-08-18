@@ -28,6 +28,15 @@ interface MtApi {
         @Query("end_date") endDate: String? = null,
     ): List<MatchSummary>
 
+    /**
+     * Correct the half length after kickoff (SB-678). start_first_half is
+     * idempotent, so the clock endpoint cannot revise it — this is the only
+     * route. Online-only: unlike scoring actions it is not queued, because a
+     * correction is not time-critical the way a goal is.
+     */
+    @PATCH("api/matches/{id}")
+    suspend fun patchMatch(@Path("id") matchId: Int, @Body body: MatchPatchRequest)
+
     @GET("api/matches/{id}/live")
     suspend fun liveState(@Path("id") matchId: Int): LiveMatchState
 
