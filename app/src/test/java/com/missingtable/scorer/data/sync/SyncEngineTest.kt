@@ -235,4 +235,54 @@ class SyncEngineTest {
         assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
         assertEquals(1, received.size)
     }
+
+    @Test
+    fun `401 is transient and the queue keeps its place`() = runBlocking {
+        // SB-779: a 401 means the token needed refreshing, not that this action
+        // is invalid. Treating it as terminal marked the head FAILED and paused
+        // the whole queue permanently — one auth hiccup silently stopped every
+        // subsequent event in a match.
+        responseQueue.add(401)
+        dao.insert(goalRow("g1"))
+        dao.insert(goalRow("g2"))
+
+        assertEquals(SyncEngine.DrainResult.TRANSIENT_FAILURE, engine.drain())
+
+        val head = dao.head()!!
+        assertEquals(PendingAction.Status.PENDING, head.status)
+        assertEquals("HTTP 401", head.lastError)
+        assertEquals(1, head.attemptCount)
+        // Strict ordering held: the second action did not jump the queue.
+        assertEquals(1, received.size)
+    }
+
+    @Test
+    fun `a 401 then success drains the whole queue`() = runBlocking {
+        // The recovery that was impossible before: once auth is healthy the
+        // same action succeeds and everything behind it flows.
+        responseQueue.add(401)
+        dao.insert(goalRow("g1"))
+        dao.insert(goalRow("g2"))
+
+        assertEquals(SyncEngine.DrainResult.TRANSIENT_FAILURE, engine.drain())
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+
+        assertNull(dao.head())
+        // 1 failed attempt + 2 successful sends.
+        assertEquals(3, received.size)
+        // The retry reused the idempotency key, so the server can dedupe.
+        assertTrue(received[1].body.readUtf8().contains("\"client_event_id\":\"g1\""))
+    }
+
+    @Test
+    fun `403 stays terminal`() = runBlocking {
+        // A permission answer about this action is not a recoverable auth
+        // state, so it must still pause for the user to resolve.
+        responseQueue.add(403)
+        dao.insert(goalRow("g1"))
+
+        assertEquals(SyncEngine.DrainResult.PAUSED, engine.drain())
+        assertEquals(PendingAction.Status.FAILED, dao.head()!!.status)
+        assertEquals("HTTP 403", dao.head()!!.lastError)
+    }
 }
