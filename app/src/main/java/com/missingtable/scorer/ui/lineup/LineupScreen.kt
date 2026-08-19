@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -71,6 +72,7 @@ import com.missingtable.scorer.data.api.LineupPosition
 import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.domain.Formations
+import com.missingtable.scorer.domain.JerseyList
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.Positions
 import kotlinx.coroutines.launch
@@ -110,6 +112,8 @@ fun LineupScreen(
     var menuSlot by remember { mutableStateOf<Int?>(null) }
     // Jersey number typed into the open quick-pick menu (reset each open).
     var menuJersey by remember { mutableStateOf("") }
+    var bulkOpen by remember { mutableStateOf(false) }
+    var bulkText by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var dirty by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -718,6 +722,7 @@ fun LineupScreen(
                     onClick = { scope.launch { copyLastLineup() } },
                     enabled = roster.isNotEmpty(),
                 ) { Text("Copy last") }
+                OutlinedButton(onClick = { bulkOpen = true }) { Text("Numbers") }
                 OutlinedButton(
                     onClick = { autoFill() },
                     enabled = roster.isNotEmpty() && assignments.size < slots.size,
@@ -771,6 +776,75 @@ fun LineupScreen(
                     }
                 }
             },
+        )
+    }
+
+    if (bulkOpen) {
+        // Bulk jersey entry (SB-787). The opposition rarely has a roster, so
+        // their sheet is typed at kickoff — one field beats 11 trips through a
+        // dropdown on a pitch diagram.
+        val parsed = JerseyList.parse(bulkText, slots.size)
+        AlertDialog(
+            onDismissRequest = { bulkOpen = false },
+            title = { Text("Enter shirt numbers") },
+            text = {
+                Column {
+                    Text(
+                        "Type them in order — first is ${slots.firstOrNull()?.code ?: "GK"}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = bulkText,
+                        onValueChange = { bulkText = it },
+                        placeholder = { Text("1 4 5 6 8 9 10 11 14 17 22") },
+                        singleLine = false,
+                        isError = parsed.problem != null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                    )
+                    // Say what will happen before it happens: which number lands
+                    // in which slot, and what is still missing.
+                    val preview = parsed.numbers.take(slots.size)
+                        .mapIndexed { i, n -> "${slots[i].code} $n" }
+                        .joinToString("  ")
+                    Text(
+                        parsed.problem
+                            ?: if (preview.isEmpty()) "Nothing entered yet"
+                            else preview + JerseyList.remaining(parsed, slots.size)
+                                .takeIf { it > 0 }?.let { "   ($it more)" }.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (parsed.problem != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = parsed.isUsable,
+                    onClick = {
+                        // Unknown numbers become placeholders (negative id) and
+                        // are materialised into roster rows on save — the same
+                        // path the per-slot entry already uses.
+                        var next = assignments
+                        parsed.numbers.take(slots.size).forEachIndexed { i, num ->
+                            val existing = roster.find { it.jerseyNumber == num }
+                            next = next + (i to (existing?.id ?: -num))
+                        }
+                        assignments = next
+                        dirty = true
+                        bulkOpen = false
+                        bulkText = ""
+                    },
+                ) { Text("Fill lineup") }
+            },
+            dismissButton = { TextButton(onClick = { bulkOpen = false }) { Text("Cancel") } },
         )
     }
 }
