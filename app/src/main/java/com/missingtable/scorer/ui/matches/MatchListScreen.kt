@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
+import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.domain.MatchBucketing
 import com.missingtable.scorer.domain.MatchTypeFilter
 import com.missingtable.scorer.domain.MatchWeek
@@ -327,12 +328,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(
-                        "${m.homeTeamName} vs ${m.awayTeamName}",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        TeamCrest(m.homeTeamClub?.logoUrl, m.homeTeamName, size = 20.dp)
+                        TeamCrest(m.awayTeamClub?.logoUrl, m.awayTeamName, size = 20.dp)
+                        Text(
+                            "${m.homeTeamName} vs ${m.awayTeamName}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                     if (m.homeScore != null && m.awayScore != null) {
                         Text(
                             "${m.homeScore}–${m.awayScore}",

@@ -54,9 +54,21 @@ data class MatchSummary(
     @SerialName("match_type_name") val matchTypeName: String? = null,
     // Shown on the row so a League fixture's competition is visible when
     // several leagues/divisions are in the same list (SB-681).
+    @SerialName("home_team_club") val homeTeamClub: TeamClub? = null,
+    @SerialName("away_team_club") val awayTeamClub: TeamClub? = null,
     @SerialName("league_name") val leagueName: String? = null,
     @SerialName("division_name") val divisionName: String? = null,
     @SerialName("match_status") val matchStatus: String? = null,
+)
+
+/** Club branding carried on a match row (SB-651). */
+@Serializable
+data class TeamClub(
+    val id: Int? = null,
+    val name: String? = null,
+    @SerialName("logo_url") val logoUrl: String? = null,
+    @SerialName("primary_color") val primaryColor: String? = null,
+    @SerialName("secondary_color") val secondaryColor: String? = null,
 )
 
 @Serializable
@@ -93,6 +105,10 @@ data class LiveMatchState(
     @SerialName("away_team_name") val awayTeamName: String = "Away",
     // Drives the default half length offered at kickoff (SB-645).
     @SerialName("age_group_name") val ageGroupName: String? = null,
+    // Club crests on the scoreboard (SB-651). The endpoint already returned
+    // these; the DTO simply never parsed them.
+    @SerialName("home_team_logo") val homeTeamLogo: String? = null,
+    @SerialName("away_team_logo") val awayTeamLogo: String? = null,
     @SerialName("recent_events") val recentEvents: List<MatchEvent> = emptyList(),
 )
 

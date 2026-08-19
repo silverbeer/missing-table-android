@@ -96,6 +96,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
+    // Club logos on the scoreboard and match list (SB-651)
+    implementation(libs.coil.compose)
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp)
