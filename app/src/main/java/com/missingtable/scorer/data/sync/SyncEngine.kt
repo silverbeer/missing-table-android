@@ -140,7 +140,23 @@ class SyncEngine(
     } catch (e: IOException) {
         Failure(transient = true, message = e.message ?: "offline")
     } catch (e: HttpException) {
-        val transient = e.code() >= 500 || e.code() == 408 || e.code() == 429
+        // 401 is TRANSIENT (SB-779). It means the token needed refreshing, not
+        // that this action is invalid. TokenAuthenticator refreshes and retries
+        // once, but when the refresh itself fails transiently (the backend
+        // returns 503 on transient failures, SB-123) the original 401 reaches
+        // here. Treating it as terminal marked the action FAILED and paused the
+        // whole queue in strict FIFO — permanently, since nothing retries a
+        // FAILED head. One momentary auth hiccup then silently stopped every
+        // subsequent event in a match.
+        //
+        // Retrying is safe: every write carries a client_event_id the server
+        // dedupes on, and clock actions are idempotent. If the refresh token is
+        // genuinely dead, TokenAuthenticator clears tokens and the UI drops to
+        // login; the queue retries harmlessly until sign-in, then drains.
+        //
+        // 403 stays terminal — that is a real answer about this action, not a
+        // recoverable auth state.
+        val transient = e.code() >= 500 || e.code() == 408 || e.code() == 429 || e.code() == 401
         Failure(transient = transient, message = "HTTP ${e.code()}")
     }
 }

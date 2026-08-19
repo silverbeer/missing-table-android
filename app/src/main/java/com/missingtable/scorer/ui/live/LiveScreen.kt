@@ -271,10 +271,21 @@ fun LiveScreen(
                 actions = {
                     if (readOnly) return@TopAppBar
                     if (pending.isNotEmpty()) {
+                        // A bare count is unactionable at a pitch — the head's
+                        // last error and attempt count are what distinguish
+                        // "syncing" from "stuck" (SB-779).
+                        val head = pending.firstOrNull()
+                        val why = head?.lastError?.let { err ->
+                            " · $err" + (head.attemptCount.takeIf { it > 1 }?.let { " ×$it" } ?: "")
+                        } ?: ""
                         Text(
-                            "${pending.size} pending",
+                            "${pending.size} pending$why",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (head?.lastError != null) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             modifier = Modifier.padding(end = 4.dp),
                         )
                     }
@@ -338,6 +349,32 @@ fun LiveScreen(
         ) {
             // A rejected (4xx) action pauses the whole queue — strict FIFO —
             // so it must be resolved before anything else syncs.
+            // Stalled on transient errors: no FAILED row, so no banner, and the
+            // engine may be deep in a 60s backoff with nothing to wake it
+            // (SB-779). Give the user a way to force a drain.
+            val stalled = pending.firstOrNull()?.takeIf {
+                it.status != PendingAction.Status.FAILED && it.lastError != null
+            }
+            if (!readOnly && stalled != null) {
+                Card(
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            "Not synced yet: ${stalled.actionType} — ${stalled.lastError}" +
+                                " (${stalled.attemptCount} attempts)",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        TextButton(onClick = { container.syncEngine.kick() }) { Text("Retry now") }
+                    }
+                }
+            }
+
             val failedAction = pending.firstOrNull { it.status == PendingAction.Status.FAILED }
             if (!readOnly && failedAction != null) {
                 Card(
