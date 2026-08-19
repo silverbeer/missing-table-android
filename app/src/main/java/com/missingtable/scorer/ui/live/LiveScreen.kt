@@ -71,6 +71,8 @@ import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.ui.common.StartMatchDialog
+import com.missingtable.scorer.ui.common.TeamCrest
+import com.missingtable.scorer.ui.theme.StatusColors
 import com.missingtable.scorer.domain.ClockStage
 import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
@@ -295,7 +297,7 @@ fun LiveScreen(
                             .padding(end = 8.dp)
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(if (online) Color(0xFF2E7D32) else Color(0xFF9E9E9E)),
+                            .background(if (online) StatusColors.online else StatusColors.offline),
                     )
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Clock actions")
@@ -412,12 +414,17 @@ fun LiveScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    s.homeTeamName,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Column(
+                    Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(s.homeTeamLogo, s.homeTeamName, size = 32.dp)
+                    Text(
+                        s.homeTeamName,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "${s.homeScore ?: 0} – ${s.awayScore ?: 0}",
@@ -426,12 +433,17 @@ fun LiveScreen(
                     )
                     Text(clock.display, style = MaterialTheme.typography.titleMedium)
                 }
-                Text(
-                    s.awayTeamName,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Column(
+                    Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(s.awayTeamLogo, s.awayTeamName, size = 32.dp)
+                    Text(
+                        s.awayTeamName,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
             }
 
             // The next clock action, on the scoreboard rather than two taps
