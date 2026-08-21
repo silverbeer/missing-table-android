@@ -56,8 +56,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,12 +78,34 @@ import com.missingtable.scorer.domain.Formations
 import com.missingtable.scorer.domain.JerseyList
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.Positions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val PitchGreen = Color(0xFF2E7D46)
 private val PitchLine = Color(0xCCFFFFFF)
 private val FitGreen = Color(0xFF4CAF50)
 private val WarnAmber = Color(0xFFFBBF24)
+
+// A jersey field that opens cold costs a tap to focus and another to raise the
+// keyboard — eleven times over a lineup, at kickoff. Focus it on open instead.
+// Popups and dialogs attach a frame or two after they compose and requestFocus
+// throws on a detached node, so the request is retried briefly rather than
+// fired once and lost.
+@Composable
+private fun rememberAutoFocus(): FocusRequester {
+    val requester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        repeat(10) {
+            if (runCatching { requester.requestFocus() }.isSuccess) {
+                keyboard?.show()
+                return@LaunchedEffect
+            }
+            delay(20)
+        }
+    }
+    return requester
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -452,6 +477,7 @@ fun LineupScreen(
                                 selectedSlot = nextOpenSlot(idx + 1)
                                 dirty = true
                             }
+                            val jerseyFocus = rememberAutoFocus()
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -468,7 +494,9 @@ fun LineupScreen(
                                         imeAction = ImeAction.Done,
                                     ),
                                     keyboardActions = KeyboardActions(onDone = { assignJersey() }),
-                                    modifier = Modifier.width(140.dp),
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .focusRequester(jerseyFocus),
                                 )
                                 TextButton(
                                     onClick = { assignJersey() },
@@ -794,6 +822,7 @@ fun LineupScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val bulkFocus = rememberAutoFocus()
                     OutlinedTextField(
                         value = bulkText,
                         onValueChange = { bulkText = it },
@@ -803,7 +832,8 @@ fun LineupScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp),
+                            .padding(top = 8.dp)
+                            .focusRequester(bulkFocus),
                     )
                     // Say what will happen before it happens: which number lands
                     // in which slot, and what is still missing.
