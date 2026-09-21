@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.data.api.MatchTypeDto
+import com.missingtable.scorer.data.api.Motw
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.domain.Competitions
 import com.missingtable.scorer.domain.MatchBucketing
@@ -60,6 +61,7 @@ fun MatchListScreen(
 ) {
     var matches by remember { mutableStateOf<List<MatchSummary>>(emptyList()) }
     var matchTypes by remember { mutableStateOf<List<MatchTypeDto>>(emptyList()) }
+    var motw by remember { mutableStateOf<Motw?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
@@ -84,6 +86,15 @@ fun MatchListScreen(
     // an error state — the chips fall back to the names the rows carry.
     LaunchedEffect(Unit) {
         runCatching { container.api.matchTypes() }.onSuccess { matchTypes = it }
+    }
+
+    // The pick belongs to the week on screen, so week navigation moves it.
+    // No pick is the ordinary answer and renders as nothing; so does a failed
+    // fetch — an error banner over a feature most weeks do not use would be
+    // noise on the one screen that has to stay readable at a pitch.
+    LaunchedEffect(reloadKey, weekOffset) {
+        val monday = MatchWeek.of(LocalDate.now(), weekOffset).start
+        motw = runCatching { container.api.motw(monday.toString()) }.getOrNull()?.motw
     }
 
     LaunchedEffect(reloadKey, weekOffset) {
@@ -231,6 +242,14 @@ fun MatchListScreen(
                 }
             }
 
+            // Match of the Week sits above week navigation, as on the web —
+            // it belongs to the week being shown, not to the tab (SB-1108).
+            motw?.let { pick ->
+                item {
+                    MotwHero(pick, onOpenMatch = { onOpenMatch(pick.match) })
+                }
+            }
+
             // Week navigation, Monday-Sunday, matching the web (SB-681).
             item {
                 Row(
@@ -292,14 +311,18 @@ fun MatchListScreen(
             if (error != null) {
                 item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) }
             }
-            section("LIVE NOW", buckets.live, onOpenMatch, highlight = true)
+            // The hero withholds the fixture until tapped, so the picked row
+            // downstairs carries its own marker — otherwise a viewer who
+            // never opens the strip never learns which match it was.
+            val motwId = motw?.match?.id
+            section("LIVE NOW", buckets.live, onOpenMatch, motwId, highlight = true)
             // Above TODAY on purpose: an unscored match from a past date is
             // the thing most likely to need action right now (SB-641).
-            section("NEEDS SCORING", buckets.needsScoring, onOpenMatch, highlight = true)
-            section("TODAY", buckets.todays, onOpenMatch)
-            section("UPCOMING", buckets.upcoming, onOpenMatch)
-            section("RECENT", buckets.recent, onOpenMatch)
-            section("POSTPONED / OTHER", buckets.other, onOpenMatch)
+            section("NEEDS SCORING", buckets.needsScoring, onOpenMatch, motwId, highlight = true)
+            section("TODAY", buckets.todays, onOpenMatch, motwId)
+            section("UPCOMING", buckets.upcoming, onOpenMatch, motwId)
+            section("RECENT", buckets.recent, onOpenMatch, motwId)
+            section("POSTPONED / OTHER", buckets.other, onOpenMatch, motwId)
             // An active filter hiding everything must say so — otherwise an
             // empty list reads as "nothing loaded" (SB-642).
             if (buckets.size == 0 && matches.isNotEmpty() && ageGroup != null) {
@@ -321,6 +344,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
     title: String,
     items: List<MatchSummary>,
     onOpen: (MatchSummary) -> Unit,
+    motwId: Int? = null,
     highlight: Boolean = false,
 ) {
     if (items.isEmpty()) return
@@ -347,6 +371,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        if (m.id == motwId) {
+                            Text(
+                                "◆",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
                         TeamCrest(m.homeTeamClub?.logoUrl, m.homeTeamName, size = 20.dp)
                         TeamCrest(m.awayTeamClub?.logoUrl, m.awayTeamName, size = 20.dp)
                         Text(

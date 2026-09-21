@@ -285,6 +285,27 @@ data class MatchTypeDto(
     @SerialName("counts_for_qualification") val countsForQualification: Boolean = false,
 )
 
+/**
+ * Match of the Week (SB-1108). `motw` is null for a week nobody picked,
+ * which is the ordinary state of the feature — the endpoint answers 200 with
+ * a null rather than 404 precisely so this is not an error path.
+ */
+@Serializable
+data class MotwResponse(
+    @SerialName("week_start") val weekStart: String? = null,
+    val motw: Motw? = null,
+)
+
+@Serializable
+data class Motw(
+    @SerialName("week_start") val weekStart: String? = null,
+    /** Which pick in the series this is; the first one is Week 1. */
+    @SerialName("pick_number") val pickNumber: Int? = null,
+    /** The editorial line, when an admin wrote one. */
+    val blurb: String? = null,
+    val match: MatchSummary,
+)
+
 // ── Post-match editing (SB-281) ─────────────────────────────────────────────
 // match_minute is REQUIRED (1..130) on the post-match endpoints, unlike live.
 
