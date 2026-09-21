@@ -24,6 +24,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Name the packages, because the action's default list still asks
+          # for `tools` — retired from the SDK repository, so sdkmanager
+          # exits 1 and the step dies before anything is built (SB-1109).
+          packages: platform-tools platforms;android-36
 
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v4
