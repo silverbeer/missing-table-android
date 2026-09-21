@@ -252,7 +252,14 @@ data class SeasonDto(
 )
 
 @Serializable
-data class LeagueDto(val id: Int, val name: String = "")
+data class LeagueDto(
+    val id: Int,
+    val name: String = "",
+    @SerialName("parent_league_id") val parentLeagueId: Int? = null,
+    @SerialName("match_type_id") val matchTypeId: Int? = null,
+    @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("display_order") val displayOrder: Int? = null,
+)
 
 @Serializable
 data class DivisionDto(

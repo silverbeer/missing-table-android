@@ -38,6 +38,7 @@ import com.missingtable.scorer.data.api.DivisionDto
 import com.missingtable.scorer.data.api.LeagueDto
 import com.missingtable.scorer.data.api.SeasonDto
 import com.missingtable.scorer.data.api.StandingRow
+import com.missingtable.scorer.domain.Leagues
 import com.missingtable.scorer.domain.Seasons
 
 /**
@@ -47,6 +48,10 @@ import com.missingtable.scorer.domain.Seasons
  * defaults U14 / Homegrown / current season / Northeast. Request params match
  * the web: season_id + age_group_id + division_id (match_type stays the
  * server default "League").
+ *
+ * The league pills are *divisions*, not every row `/api/leagues` returns —
+ * Flex is a competition of Homegrown and Kick Futsal is retired (SB-1106).
+ * See [Leagues.divisionChips].
  */
 @Composable
 fun TableScreen(container: AppContainer) {
@@ -73,10 +78,10 @@ fun TableScreen(container: AppContainer) {
             }
         }
         runCatching { container.api.leagues() }.onSuccess { list ->
-            leagues = list
-            if (selectedLeague == null) {
-                selectedLeague = (list.firstOrNull { it.name == "Homegrown" } ?: list.firstOrNull())?.id
-            }
+            // Chips are divisions, so Flex (a competition of Homegrown) and
+            // retired leagues never become one — see Leagues.divisionChips.
+            leagues = Leagues.divisionChips(list)
+            if (selectedLeague == null) selectedLeague = Leagues.defaultChip(list)?.id
         }
         runCatching { container.api.seasons() }.onSuccess { list ->
             seasons = list
@@ -146,21 +151,37 @@ fun TableScreen(container: AppContainer) {
             }
         }
 
+        // Read the state ONCE into locals. `standings!!` inside the LazyColumn
+        // used to crash the app (SB-1106): the `when` guards that it is
+        // non-null, but LazyColumn does not build its interval content there
+        // and then — it builds it from a snapshot observer, after the branch
+        // was chosen. Switching league or division sets `standings` back to
+        // null in between, and the `!!` ran on the new value.
+        val rows = standings
+        val message = error
+
         when {
-            error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(error!!, color = MaterialTheme.colorScheme.error)
+            message != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(message, color = MaterialTheme.colorScheme.error)
             }
-            standings == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            rows == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            standings!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            rows.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("No completed matches yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> {
                 HeaderRow()
                 HorizontalDivider()
+                val numbered = rows.withIndex().toList()
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(standings!!.withIndex().toList(), key = { it.value.teamId ?: it.index }) { (idx, row) ->
+                    // Keys must not collide either: a row with no team_id fell
+                    // back to its index, which is the same Int space as a
+                    // team_id, and Compose throws the moment the two meet.
+                    items(
+                        numbered,
+                        key = { (idx, row) -> row.teamId?.let { "team-$it" } ?: "row-$idx" },
+                    ) { (idx, row) ->
                         StandingLine(position = idx + 1, row = row)
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
