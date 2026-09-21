@@ -40,9 +40,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.MatchSummary
+import com.missingtable.scorer.data.api.MatchTypeDto
 import com.missingtable.scorer.ui.common.TeamCrest
+import com.missingtable.scorer.domain.Competitions
 import com.missingtable.scorer.domain.MatchBucketing
-import com.missingtable.scorer.domain.MatchTypeFilter
 import com.missingtable.scorer.domain.MatchWeek
 import java.time.LocalDate
 import kotlinx.coroutines.launch
@@ -58,6 +59,7 @@ fun MatchListScreen(
     onDownloadUpdate: () -> Unit = {},
 ) {
     var matches by remember { mutableStateOf<List<MatchSummary>>(emptyList()) }
+    var matchTypes by remember { mutableStateOf<List<MatchTypeDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
@@ -76,6 +78,12 @@ fun MatchListScreen(
     // Adopt the persisted choice once, on first emission, then let taps win.
     LaunchedEffect(savedAgeGroup) {
         if (!ageGroupTouched) ageGroup = savedAgeGroup
+    }
+
+    // Competition metadata changes about once a season; a failure here is not
+    // an error state — the chips fall back to the names the rows carry.
+    LaunchedEffect(Unit) {
+        runCatching { container.api.matchTypes() }.onSuccess { matchTypes = it }
     }
 
     LaunchedEffect(reloadKey, weekOffset) {
@@ -117,10 +125,10 @@ fun MatchListScreen(
         .sortedBy { it.second }
     val byAge = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
 
-    val typeOptions = MatchTypeFilter.options(byAge)
-    val activeType = MatchTypeFilter.resolve(byAge, savedType, typeChosen)
-    val typeDropped = typeChosen && MatchTypeFilter.savedChoiceUnavailable(byAge, savedType)
-    val visible = activeType?.let { t -> byAge.filter { it.matchTypeName == t } } ?: byAge
+    val competitionChips = Competitions.chips(byAge, matchTypes)
+    val activeChip = Competitions.resolve(competitionChips, savedType, typeChosen)
+    val typeDropped = typeChosen && Competitions.savedChoiceUnavailable(competitionChips, savedType)
+    val visible = Competitions.filter(byAge, activeChip)
 
     // Week governs TODAY / UPCOMING / RECENT; NEEDS SCORING keeps the wider
     // look-back so an overdue match cannot hide behind week navigation.
@@ -194,7 +202,10 @@ fun MatchListScreen(
             // Match type (SB-681). Chips come from the loaded rows, and the
             // default follows the data — a fixed "League" would show an empty
             // list in a preseason where every fixture is a Friendly.
-            if (typeOptions.size > 1) {
+            // One chip per competition actually present, then the combined
+            // "League + Flex", then All — the web's order (SB-1107). A single
+            // competition needs no row: there is nothing to choose between.
+            if (competitionChips.size > 2) {
                 item {
                     Row(
                         Modifier
@@ -203,16 +214,17 @@ fun MatchListScreen(
                             .padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        FilterChip(
-                            selected = activeType == null,
-                            onClick = { scope.launch { container.uiPrefs.setMatchesType(null) } },
-                            label = { Text("All") },
-                        )
-                        typeOptions.forEach { name ->
+                        competitionChips.forEach { chip ->
                             FilterChip(
-                                selected = activeType == name,
-                                onClick = { scope.launch { container.uiPrefs.setMatchesType(name) } },
-                                label = { Text(name) },
+                                selected = activeChip.key == chip.key,
+                                onClick = {
+                                    scope.launch {
+                                        container.uiPrefs.setMatchesType(
+                                            chip.key.takeUnless { chip.isAll },
+                                        )
+                                    }
+                                },
+                                label = { Text("${chip.label} ${chip.count}") },
                             )
                         }
                     }
@@ -251,7 +263,9 @@ fun MatchListScreen(
             if (typeDropped) {
                 item {
                     Text(
-                        "No $savedType matches here — showing all types.",
+                        // The key is an id once chips are id-based, so the
+                        // message names the week rather than the competition.
+                        "That competition has no matches this week — showing all.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

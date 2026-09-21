@@ -70,6 +70,9 @@ interface MtApi {
     @GET("api/age-groups")
     suspend fun ageGroups(): List<AgeGroupDto>
 
+    @GET("api/match-types")
+    suspend fun matchTypes(): List<MatchTypeDto>
+
     @GET("api/android/apk-url")
     suspend fun apkUrl(): ApkUrlResponse
 

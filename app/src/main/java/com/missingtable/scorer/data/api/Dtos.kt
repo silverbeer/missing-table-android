@@ -52,6 +52,9 @@ data class MatchSummary(
     @SerialName("age_group_id") val ageGroupId: Int? = null,
     @SerialName("age_group_name") val ageGroupName: String? = null,
     @SerialName("match_type_name") val matchTypeName: String? = null,
+    // The competition filter keys on the id, not the name: the name is what a
+    // chip says, the id is what it selects (SB-1107).
+    @SerialName("match_type_id") val matchTypeId: Int? = null,
     // Shown on the row so a League fixture's competition is visible when
     // several leagues/divisions are in the same list (SB-681).
     @SerialName("home_team_club") val homeTeamClub: TeamClub? = null,
@@ -266,6 +269,20 @@ data class DivisionDto(
     val id: Int,
     val name: String = "",
     @SerialName("league_id") val leagueId: Int? = null,
+)
+
+/**
+ * A competition (SB-1107). `/api/match-types` returns these in
+ * `display_order` — League before Flex, not alphabetically — and flags the
+ * ones that qualify for MLS NEXT Cup, which is what the combined
+ * "League + Flex" chip is built from.
+ */
+@Serializable
+data class MatchTypeDto(
+    val id: Int,
+    val name: String = "",
+    @SerialName("display_order") val displayOrder: Int? = null,
+    @SerialName("counts_for_qualification") val countsForQualification: Boolean = false,
 )
 
 // ── Post-match editing (SB-281) ─────────────────────────────────────────────
