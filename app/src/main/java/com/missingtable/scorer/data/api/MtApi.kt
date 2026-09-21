@@ -73,6 +73,14 @@ interface MtApi {
     @GET("api/match-types")
     suspend fun matchTypes(): List<MatchTypeDto>
 
+    /**
+     * The featured match for a week (SB-1108). `week_start` is any date in the
+     * week of interest — the server snaps it to that week's Monday — so the
+     * Matches tab passes the Monday it is already showing.
+     */
+    @GET("api/motw")
+    suspend fun motw(@Query("week_start") weekStart: String? = null): MotwResponse
+
     @GET("api/android/apk-url")
     suspend fun apkUrl(): ApkUrlResponse
 
