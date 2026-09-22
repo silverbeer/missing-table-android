@@ -39,11 +39,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
+import com.missingtable.scorer.data.api.DivisionDto
+import com.missingtable.scorer.data.api.LeagueDto
 import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.data.api.MatchTypeDto
 import com.missingtable.scorer.data.api.Motw
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.domain.Competitions
+import com.missingtable.scorer.domain.Conferences
 import com.missingtable.scorer.domain.MatchBucketing
 import com.missingtable.scorer.domain.MatchWeek
 import java.time.LocalDate
@@ -61,6 +64,8 @@ fun MatchListScreen(
 ) {
     var matches by remember { mutableStateOf<List<MatchSummary>>(emptyList()) }
     var matchTypes by remember { mutableStateOf<List<MatchTypeDto>>(emptyList()) }
+    var divisions by remember { mutableStateOf<List<DivisionDto>>(emptyList()) }
+    var leagues by remember { mutableStateOf<List<LeagueDto>>(emptyList()) }
     var motw by remember { mutableStateOf<Motw?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -74,6 +79,7 @@ fun MatchListScreen(
     val savedAgeGroup by container.uiPrefs.matchesAgeGroup.collectAsState(initial = null)
     val savedType by container.uiPrefs.matchesType.collectAsState(initial = null)
     val typeChosen by container.uiPrefs.matchesTypeChosen.collectAsState(initial = false)
+    val savedConferences by container.uiPrefs.matchesConferences.collectAsState(initial = emptySet())
     var weekOffset by remember { mutableIntStateOf(0) }
     var ageGroupTouched by remember { mutableStateOf(false) }
     var ageGroup by remember { mutableStateOf<Int?>(null) }
@@ -84,8 +90,12 @@ fun MatchListScreen(
 
     // Competition metadata changes about once a season; a failure here is not
     // an error state — the chips fall back to the names the rows carry.
+    // Divisions and leagues come along for the conference filter, which needs
+    // each conference's league to know which competition it groups under.
     LaunchedEffect(Unit) {
         runCatching { container.api.matchTypes() }.onSuccess { matchTypes = it }
+        runCatching { container.api.divisions() }.onSuccess { divisions = it }
+        runCatching { container.api.leagues() }.onSuccess { leagues = it }
     }
 
     // The pick belongs to the week on screen, so week navigation moves it.
@@ -136,10 +146,27 @@ fun MatchListScreen(
         .sortedBy { it.second }
     val byAge = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
 
-    val competitionChips = Competitions.chips(byAge, matchTypes)
+    // Conferences come from what this age group plays, so switching age group
+    // re-offers them — and prunes a selection the new group does not play,
+    // which would otherwise empty the list with no selected chip to explain it.
+    val conferences = Conferences.visible(byAge, divisions)
+    val conferenceGroups = Conferences.groups(conferences, leagues, matchTypes)
+    val activeConferences = Conferences.prune(savedConferences, conferences)
+    LaunchedEffect(activeConferences, savedConferences) {
+        if (activeConferences != savedConferences && conferences.isNotEmpty()) {
+            container.uiPrefs.setMatchesConferences(activeConferences)
+        }
+    }
+
+    // Conference narrows BEFORE the competition chips are built, so their
+    // counts describe the list underneath rather than contradicting it — the
+    // same order the web applies (matchesBeforeTypeFilter, SB-1107).
+    val byConference = Conferences.filter(byAge, activeConferences)
+
+    val competitionChips = Competitions.chips(byConference, matchTypes)
     val activeChip = Competitions.resolve(competitionChips, savedType, typeChosen)
     val typeDropped = typeChosen && Competitions.savedChoiceUnavailable(competitionChips, savedType)
-    val visible = Competitions.filter(byAge, activeChip)
+    val visible = Competitions.filter(byConference, activeChip)
 
     // Week governs TODAY / UPCOMING / RECENT; NEEDS SCORING keeps the wider
     // look-back so an overdue match cannot hide behind week navigation.
@@ -214,9 +241,14 @@ fun MatchListScreen(
             // default follows the data — a fixed "League" would show an empty
             // list in a preseason where every fixture is a Friendly.
             // One chip per competition actually present, then the combined
-            // "League + Flex", then All — the web's order (SB-1107). A single
-            // competition needs no row: there is nothing to choose between.
-            if (competitionChips.size > 2) {
+            // "League + Flex", then All — the web's order (SB-1107).
+            //
+            // Shown from two chips, as the web does, not three. Hiding the row
+            // at one competition made the control vanish the moment a
+            // conference selection narrowed to a single competition — leaving
+            // a dropped choice, an explanation, and no way to act on either
+            // (SB-1110).
+            if (competitionChips.size > 1) {
                 item {
                     Row(
                         Modifier
@@ -237,6 +269,55 @@ fun MatchListScreen(
                                 },
                                 label = { Text("${chip.label} ${chip.count}") },
                             )
+                        }
+                    }
+                }
+            }
+
+            // Conference (SB-1110). Multi-select, because conferences are
+            // neighbours rather than alternatives — a club near a border plays
+            // three of them in one season. "All" is the empty selection, so it
+            // clears rather than adding a fourth value.
+            if (conferences.size > 1) {
+                item {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = activeConferences.isEmpty(),
+                            onClick = { scope.launch { container.uiPrefs.setMatchesConferences(emptySet()) } },
+                            label = { Text("All conferences") },
+                        )
+                        conferenceGroups.forEach { group ->
+                            // The heading disambiguates same-named conferences
+                            // across competitions — Florida exists under both
+                            // League and Flex, as different rows (SB-1040).
+                            if (conferenceGroups.size > 1) {
+                                Text(
+                                    group.label.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(Alignment.CenterVertically),
+                                )
+                            }
+                            group.conferences.forEach { conference ->
+                                FilterChip(
+                                    selected = conference.id in activeConferences,
+                                    onClick = {
+                                        val next = if (conference.id in activeConferences) {
+                                            activeConferences - conference.id
+                                        } else {
+                                            activeConferences + conference.id
+                                        }
+                                        scope.launch { container.uiPrefs.setMatchesConferences(next) }
+                                    },
+                                    label = { Text(conference.name) },
+                                )
+                            }
                         }
                     }
                 }
@@ -283,8 +364,10 @@ fun MatchListScreen(
                 item {
                     Text(
                         // The key is an id once chips are id-based, so the
-                        // message names the week rather than the competition.
-                        "That competition has no matches this week — showing all.",
+                        // message cannot name the competition. It cannot name
+                        // the week either: a conference selection is just as
+                        // likely to be what removed it (SB-1110).
+                        "No matches for that competition in this selection — showing all.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

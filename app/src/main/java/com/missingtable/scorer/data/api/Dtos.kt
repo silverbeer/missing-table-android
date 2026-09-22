@@ -61,6 +61,10 @@ data class MatchSummary(
     @SerialName("away_team_club") val awayTeamClub: TeamClub? = null,
     @SerialName("league_name") val leagueName: String? = null,
     @SerialName("division_name") val divisionName: String? = null,
+    // The conference filter keys on the id: two conferences can share a name
+    // across competitions (Florida under League and under Flex), so the name
+    // does not identify one (SB-1110).
+    @SerialName("division_id") val divisionId: Int? = null,
     @SerialName("match_status") val matchStatus: String? = null,
 )
 
