@@ -52,4 +52,30 @@ class UiPrefs(private val context: Context) {
             prefs[matchesTypeChosenKey] = true
         }
     }
+
+    private val matchesConferencesKey = stringPreferencesKey("matches_conference_ids")
+
+    /**
+     * Conference filter on the Matches tab — multi-select, so a set (SB-1110).
+     * Empty means "all conferences", which is the absence of a filter rather
+     * than a value of its own.
+     *
+     * Stored as a comma-joined string: DataStore does have a string-set key,
+     * but it gives no ordering guarantee and these are ints, so parsing one
+     * field beats hiding the conversion behind a type that fits worse.
+     */
+    val matchesConferences: Flow<Set<Int>> = context.uiDataStore.data.map { prefs ->
+        prefs[matchesConferencesKey]
+            ?.split(',')
+            ?.mapNotNull { it.trim().toIntOrNull() }
+            ?.toSet()
+            .orEmpty()
+    }
+
+    suspend fun setMatchesConferences(ids: Set<Int>) {
+        context.uiDataStore.edit { prefs ->
+            if (ids.isEmpty()) prefs.remove(matchesConferencesKey)
+            else prefs[matchesConferencesKey] = ids.sorted().joinToString(",")
+        }
+    }
 }
