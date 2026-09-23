@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +82,8 @@ fun MatchListScreen(
     val typeChosen by container.uiPrefs.matchesTypeChosen.collectAsState(initial = false)
     val savedConferences by container.uiPrefs.matchesConferences.collectAsState(initial = emptySet())
     var weekOffset by remember { mutableIntStateOf(0) }
+    // Closed by default (SB-1118); survives rotation, resets with the session.
+    var needsScoringExpanded by rememberSaveable { mutableStateOf(false) }
     var ageGroupTouched by remember { mutableStateOf(false) }
     var ageGroup by remember { mutableStateOf<Int?>(null) }
     // Adopt the persisted choice once, on first emission, then let taps win.
@@ -168,11 +171,14 @@ fun MatchListScreen(
     val typeDropped = typeChosen && Competitions.savedChoiceUnavailable(competitionChips, savedType)
     val visible = Competitions.filter(byConference, activeChip)
 
-    // Week governs TODAY / UPCOMING / RECENT; NEEDS SCORING keeps the wider
-    // look-back so an overdue match cannot hide behind week navigation.
+    // Every section belongs to the week on screen, NEEDS SCORING included
+    // (SB-1118). It used to keep the wider 60-day look-back so an overdue
+    // match could not hide behind week navigation (SB-641) — but a row from
+    // another week, sitting under a header that names this one, cost more
+    // trust than the reminder was worth. It is reached by navigating to its
+    // week, which is what the week control is for.
     val inWeek = visible.filter { it.matchDate in week }
-    val weekBuckets = MatchBucketing.bucket(inWeek, today)
-    val buckets = weekBuckets.copy(needsScoring = MatchBucketing.bucket(visible, today).needsScoring)
+    val buckets = MatchBucketing.bucket(inWeek, today)
 
     Scaffold(
         topBar = {
@@ -399,9 +405,20 @@ fun MatchListScreen(
             // never opens the strip never learns which match it was.
             val motwId = motw?.match?.id
             section("LIVE NOW", buckets.live, onOpenMatch, motwId, highlight = true)
-            // Above TODAY on purpose: an unscored match from a past date is
-            // the thing most likely to need action right now (SB-641).
-            section("NEEDS SCORING", buckets.needsScoring, onOpenMatch, motwId, highlight = true)
+            // Still above TODAY, because an unscored match is the thing most
+            // likely to need action (SB-641) — but collapsed, because this tab
+            // is opened to read upcoming fixtures and scores far more often
+            // than to clear a backlog (SB-1118). The count in the header is
+            // what keeps a closed section honest about having something in it.
+            section(
+                "NEEDS SCORING",
+                buckets.needsScoring,
+                onOpenMatch,
+                motwId,
+                highlight = true,
+                collapsed = !needsScoringExpanded,
+                onToggle = { needsScoringExpanded = !needsScoringExpanded },
+            )
             section("TODAY", buckets.todays, onOpenMatch, motwId)
             section("UPCOMING", buckets.upcoming, onOpenMatch, motwId)
             section("RECENT", buckets.recent, onOpenMatch, motwId)
@@ -423,23 +440,50 @@ fun MatchListScreen(
     }
 }
 
+/**
+ * @param collapsed hides the rows but keeps the header, which then carries the
+ *   count — a closed section that does not say how much it is hiding is worse
+ *   than no section.
+ * @param onToggle null for a section that is always open.
+ */
 private fun androidx.compose.foundation.lazy.LazyListScope.section(
     title: String,
     items: List<MatchSummary>,
     onOpen: (MatchSummary) -> Unit,
     motwId: Int? = null,
     highlight: Boolean = false,
+    collapsed: Boolean = false,
+    onToggle: (() -> Unit)? = null,
 ) {
+    // An empty week renders no header at all, collapsible or not.
     if (items.isEmpty()) return
     item {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            color = if (highlight) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-        )
+        val color =
+            if (highlight) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(if (onToggle != null) Modifier.clickable { onToggle() } else Modifier)
+                .padding(top = 12.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                if (onToggle != null) "$title (${items.size})" else title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = color,
+            )
+            if (onToggle != null) {
+                Text(
+                    if (collapsed) "▾" else "▴",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = color,
+                )
+            }
+        }
     }
+    if (collapsed) return
     items(items, key = { "${title}-${it.id}" }) { m ->
         Card(modifier = Modifier
             .fillMaxWidth()
