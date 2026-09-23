@@ -113,6 +113,64 @@ class ConferencesTest {
     }
 
     @Test
+    fun `the watched conferences come first in their group`() {
+        val northeast = DivisionDto(id = 12, name = "Northeast", leagueId = 1)
+        val pathway = DivisionDto(id = 13, name = "Northeast (Pro Player Pathway)", leagueId = 1)
+        val central = DivisionDto(id = 14, name = "Central", leagueId = 1)
+        val all = divisions + listOf(northeast, pathway, central)
+        // Alphabetically this is Central, Florida, Northeast, Northeast (PPP).
+        val rows = listOf(m(central), m(floridaLeague), m(pathway), m(northeast))
+        val group = Conferences.groups(Conferences.visible(rows, all), leagues, matchTypes).single()
+        assertEquals(
+            listOf("Northeast", "Northeast (Pro Player Pathway)", "Central", "Florida"),
+            group.conferences.map { it.name },
+        )
+    }
+
+    @Test
+    fun `Flex has its own watched conferences`() {
+        val empire = DivisionDto(id = 22, name = "Empire", leagueId = 290)
+        val newEngland = DivisionDto(id = 23, name = "New England", leagueId = 290)
+        val all = divisions + listOf(empire, newEngland)
+        val rows = listOf(m(turnpike, flexType), m(newEngland, flexType), m(empire, flexType))
+        val group = Conferences.groups(Conferences.visible(rows, all), leagues, matchTypes).single()
+        assertEquals(
+            listOf("Empire", "New England", "Turnpike"),
+            group.conferences.map { it.name },
+        )
+    }
+
+    @Test
+    fun `priority is scoped to its competition`() {
+        // "New England" is watched under Flex. A League conference of the same
+        // name must not be promoted by it.
+        val leagueNewEngland = DivisionDto(id = 15, name = "New England", leagueId = 1)
+        val central = DivisionDto(id = 14, name = "Central", leagueId = 1)
+        val all = divisions + listOf(leagueNewEngland, central)
+        val rows = listOf(m(leagueNewEngland), m(central))
+        val group = Conferences.groups(Conferences.visible(rows, all), leagues, matchTypes)
+            .single { it.label == "League" }
+        assertEquals(listOf("Central", "New England"), group.conferences.map { it.name })
+    }
+
+    @Test
+    fun `a watched conference with no matches still gets no chip`() {
+        // Priority decides order, never presence.
+        val rows = listOf(m(floridaLeague))
+        val group = Conferences.groups(Conferences.visible(rows, divisions), leagues, matchTypes).single()
+        assertEquals(listOf("Florida"), group.conferences.map { it.name })
+    }
+
+    @Test
+    fun `conferences off the priority list keep alphabetical order`() {
+        val central = DivisionDto(id = 14, name = "Central", leagueId = 1)
+        val all = divisions + central
+        val rows = listOf(m(floridaLeague), m(central))
+        val group = Conferences.groups(Conferences.visible(rows, all), leagues, matchTypes).single()
+        assertEquals(listOf("Central", "Florida"), group.conferences.map { it.name })
+    }
+
+    @Test
     fun `an empty selection filters nothing`() {
         val rows = listOf(m(northeast), m(turnpike, flexType))
         assertEquals(rows.size, Conferences.filter(rows, emptySet()).size)
