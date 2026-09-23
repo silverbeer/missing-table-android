@@ -53,6 +53,32 @@ class UiPrefs(private val context: Context) {
         }
     }
 
+    // Leaders keeps its own keys: it is a different question ("who is top
+    // scorer in League?") from the one Matches asks, and sharing a filter
+    // between the two tabs would move one when the viewer changed the other.
+    private val leadersAgeGroupKey = intPreferencesKey("leaders_age_group_id")
+    private val leadersMatchTypeKey = intPreferencesKey("leaders_match_type_id")
+
+    /** Age-group filter on Leaders; null means every age group. */
+    val leadersAgeGroup: Flow<Int?> = context.uiDataStore.data.map { it[leadersAgeGroupKey] }
+
+    suspend fun setLeadersAgeGroup(ageGroupId: Int?) {
+        context.uiDataStore.edit { prefs ->
+            if (ageGroupId == null) prefs.remove(leadersAgeGroupKey)
+            else prefs[leadersAgeGroupKey] = ageGroupId
+        }
+    }
+
+    /** Competition filter on Leaders; null means "never chose", which resolves to League. */
+    val leadersMatchType: Flow<Int?> = context.uiDataStore.data.map { it[leadersMatchTypeKey] }
+
+    suspend fun setLeadersMatchType(matchTypeId: Int?) {
+        context.uiDataStore.edit { prefs ->
+            if (matchTypeId == null) prefs.remove(leadersMatchTypeKey)
+            else prefs[leadersMatchTypeKey] = matchTypeId
+        }
+    }
+
     private val matchesConferencesKey = stringPreferencesKey("matches_conference_ids")
 
     /**

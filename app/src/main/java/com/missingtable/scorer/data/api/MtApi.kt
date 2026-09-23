@@ -52,6 +52,9 @@ interface MtApi {
     suspend fun goalsLeaderboard(
         @Query("season_id") seasonId: Int,
         @Query("age_group_id") ageGroupId: Int? = null,
+        // Singular by design server-side, which is why Leaders has no
+        // "League + Flex" chip the way Matches does (SB-1119).
+        @Query("match_type_id") matchTypeId: Int? = null,
         @Query("limit") limit: Int = 50,
     ): List<LeaderboardEntry>
 
@@ -72,6 +75,21 @@ interface MtApi {
 
     @GET("api/match-types")
     suspend fun matchTypes(): List<MatchTypeDto>
+
+    /**
+     * The competitions this season and age group actually play (SB-1119).
+     *
+     * Leaders filters server-side, so its rows arrive already narrowed and it
+     * cannot build chips from what is present the way Matches does. This is
+     * how it still avoids offering a chip that can only return nothing — U13
+     * plays no Flex, and the client must learn that from the data rather than
+     * from hardcoded age-group ids that rot.
+     */
+    @GET("api/match-types/available")
+    suspend fun availableMatchTypes(
+        @Query("season_id") seasonId: Int? = null,
+        @Query("age_group_id") ageGroupId: Int? = null,
+    ): List<MatchTypeDto>
 
     /**
      * The featured match for a week (SB-1108). `week_start` is any date in the
