@@ -28,6 +28,26 @@ object Conferences {
     data class Group(val key: String, val label: String, val conferences: List<Conference>)
 
     /**
+     * The conferences worth reaching first, per competition (SB-1117).
+     *
+     * The chip row scrolls horizontally on a phone, so alphabetical order
+     * buried the ones actually being watched behind Central, Florida, Frontier
+     * and Mid-America — every matchday opened with a scroll. Order inside each
+     * list is the order the chips appear in.
+     *
+     * Keyed by competition, so promoting a name under League leaves a
+     * same-named conference under Flex where it was. Edit this when the
+     * watched conferences change; a name here that has no matches still gets
+     * no chip, because priority decides order and never presence.
+     */
+    val PRIORITY: Map<String, List<String>> = mapOf(
+        // Pro Player Pathway brackets are Homegrown conferences, so they group
+        // under League beside the regional Northeast.
+        "League" to listOf("Northeast", "Northeast (Pro Player Pathway)"),
+        "Flex" to listOf("Empire", "New England"),
+    )
+
+    /**
      * The conferences present in [rows], named from [divisions], sorted by
      * name.
      *
@@ -56,6 +76,9 @@ object Conferences {
      * A league that does not say which competition it is (an API predating
      * `leagues.match_type_id`) groups as "Other" and sorts last. With a single
      * group the caller shows no headings; the grouping still decides order.
+     *
+     * Within a group the watched conferences come first, in [PRIORITY] order,
+     * and everything else keeps the alphabetical order [visible] gave it.
      */
     fun groups(
         conferences: List<Conference>,
@@ -74,10 +97,15 @@ object Conferences {
         return grouped
             .map { (key, list) ->
                 val label = labels.getValue(key)
+                // Stable sort, so conferences off the priority list keep the
+                // alphabetical order they arrived in.
+                val priority = PRIORITY[label].orEmpty()
                 Group(
                     key = key.lowercase().replace(Regex("[^a-z0-9]+"), "-"),
                     label = label,
-                    conferences = list,
+                    conferences = list.sortedBy { conference ->
+                        priority.indexOf(conference.name).takeIf { it >= 0 } ?: Int.MAX_VALUE
+                    },
                 ) to if (key == "other") 999 else (order[label] ?: 99)
             }
             .sortedBy { it.second }
