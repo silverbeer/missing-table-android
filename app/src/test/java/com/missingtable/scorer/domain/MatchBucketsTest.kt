@@ -33,6 +33,23 @@ class MatchBucketsTest {
     }
 
     @Test
+    fun `needsScoring only holds rows from the week on screen`() {
+        // SB-1118: the section used to be fed the whole 60-day fetch while
+        // every other section was week-scoped, so "This week" listed a match
+        // from last week under a header naming this one. The screen filters to
+        // the week before bucketing; this pins that composition.
+        val week = MatchWeek.of(java.time.LocalDate.parse("2026-08-16"))
+        val thisWeek = match(1, "2026-08-11", "scheduled")
+        val lastWeek = match(2, "2026-08-05", "scheduled")
+
+        val inWeek = listOf(thisWeek, lastWeek).filter { it.matchDate in week }
+        val b = MatchBucketing.bucket(inWeek, today)
+
+        assertEquals(listOf(thisWeek), b.needsScoring)
+        assertTrue("a match outside the week must not appear", b.size == 1)
+    }
+
+    @Test
     fun `tbd is awaiting a score whatever its date`() {
         // tbd means "played, score pending" server-side — actionable even if
         // the date is today or in the future.
