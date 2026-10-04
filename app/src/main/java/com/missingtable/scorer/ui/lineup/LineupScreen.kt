@@ -1,6 +1,5 @@
 package com.missingtable.scorer.ui.lineup
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,7 +57,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -78,11 +76,10 @@ import com.missingtable.scorer.domain.Formations
 import com.missingtable.scorer.domain.JerseyList
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.Positions
+import com.missingtable.scorer.ui.common.PitchCanvas
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val PitchGreen = Color(0xFF2E7D46)
-private val PitchLine = Color(0xCCFFFFFF)
 private val FitGreen = Color(0xFF4CAF50)
 private val WarnAmber = Color(0xFFFBBF24)
 
@@ -369,27 +366,7 @@ fun LineupScreen(
             ) {
                 val w = maxWidth
                 val h = maxHeight
-                Canvas(Modifier.fillMaxSize()) {
-                    drawRect(PitchGreen)
-                    val stroke = 3f
-                    // outline + halfway + center circle (attacking half up top)
-                    drawRect(PitchLine, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
-                    drawLine(PitchLine, Offset(0f, size.height * 0.5f), Offset(size.width, size.height * 0.5f), stroke)
-                    drawCircle(PitchLine, radius = size.width * 0.12f, center = Offset(size.width / 2, size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
-                    // penalty boxes
-                    drawRect(
-                        PitchLine,
-                        topLeft = Offset(size.width * 0.22f, size.height * 0.88f),
-                        size = androidx.compose.ui.geometry.Size(size.width * 0.56f, size.height * 0.12f),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
-                    )
-                    drawRect(
-                        PitchLine,
-                        topLeft = Offset(size.width * 0.22f, 0f),
-                        size = androidx.compose.ui.geometry.Size(size.width * 0.56f, size.height * 0.12f),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
-                    )
-                }
+                PitchCanvas()
 
                 slots.forEachIndexed { idx, slot ->
                     val playerId = assignments[idx]

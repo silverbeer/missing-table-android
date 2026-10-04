@@ -65,6 +65,7 @@ import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
+import com.missingtable.scorer.data.api.LineupResponse
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchPatchRequest
 import com.missingtable.scorer.data.api.RosterPlayer
@@ -78,6 +79,7 @@ import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
 import com.missingtable.scorer.domain.LiveClock
 import com.missingtable.scorer.domain.MatchClock
+import com.missingtable.scorer.domain.OnPitch
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -87,9 +89,6 @@ private sealed interface ActionFlow {
     data object None : ActionFlow
     data class GoalPickScorer(val teamId: Int) : ActionFlow
     data class GoalPickAssist(val teamId: Int, val scorer: RosterPlayer?, val scorerName: String?) : ActionFlow
-    data object SubPickTeam : ActionFlow
-    data class SubPickOut(val teamId: Int) : ActionFlow
-    data class SubPickIn(val teamId: Int, val out: RosterPlayer) : ActionFlow
     data object CardPickTeam : ActionFlow
     data class CardPickType(val teamId: Int) : ActionFlow
     data class CardPickPlayer(val teamId: Int, val cardType: String) : ActionFlow
@@ -112,7 +111,14 @@ fun LiveScreen(
 ) {
     var serverState by remember { mutableStateOf<LiveMatchState?>(null) }
     var rosters by remember { mutableStateOf<Map<Int, List<RosterPlayer>>>(emptyMap()) }
-    var starters by remember { mutableStateOf<Map<Int, Set<Int>>>(emptyMap()) }
+    // Saved starting lineups by team. Never rewritten once the match is under
+    // way — subs are events applied on top (SB-1228).
+    var lineups by remember { mutableStateOf<Map<Int, LineupResponse>>(emptyMap()) }
+    // Sub mode (SB-1228): open flag, the minute SUB was tapped, and the team
+    // last subbed so the next open lands on it.
+    var subMode by remember { mutableStateOf(false) }
+    var subStamp by remember { mutableStateOf(EventStamp.UNKNOWN) }
+    var lastSubTeam by remember { mutableStateOf<Int?>(null) }
     var flow by remember { mutableStateOf<ActionFlow>(ActionFlow.None) }
     // Minute captured when an entry flow STARTS (SB-652). Reading the clock at
     // the end of the flow would stamp however long the pickers took onto the
@@ -163,36 +169,29 @@ fun LiveScreen(
         val s = state ?: return@LaunchedEffect
         if (readOnly || seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
         val loaded = mutableMapOf<Int, List<RosterPlayer>>()
-        val startingXi = mutableMapOf<Int, Set<Int>>()
+        val saved = mutableMapOf<Int, LineupResponse>()
         listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
             runCatching { container.api.roster(teamId, seasonId, null) }
                 .onSuccess { loaded[teamId] = it.roster }
             runCatching { container.api.getLineup(matchId, teamId) }
                 .onSuccess { lineup ->
-                    if (lineup.positions.isNotEmpty()) {
-                        startingXi[teamId] = lineup.positions.map { it.playerId }.toSet()
-                    }
+                    if (lineup.positions.isNotEmpty()) saved[teamId] = lineup
                 }
         }
         rosters = loaded
-        starters = startingXi
+        lineups = saved
     }
 
-    // On-pitch set: starting XI adjusted by substitution events (oldest first).
-    // Null when no lineup was saved — pickers then fall back to the full roster.
-    fun onPitch(teamId: Int): Set<Int>? {
-        val base = starters[teamId] ?: return null
-        var current = base
-        state?.recentEvents
+    // Who is on the pitch now, by position: the starting lineup with
+    // substitution events applied oldest-first. Null when no lineup was saved.
+    fun currentPitch(teamId: Int): Map<String, Int>? {
+        val lineup = lineups[teamId] ?: return null
+        val subs = state?.recentEvents
             ?.filter { it.eventType == "substitution" && it.teamId == teamId }
             ?.reversed()
-            ?.forEach { sub ->
-                val inId = sub.playerId
-                val outId = sub.playerOutId
-                if (outId != null) current = current - outId
-                if (inId != null) current = current + inId
-            }
-        return current
+            ?.map { OnPitch.Sub(outId = it.playerOutId, inId = it.playerId) }
+            .orEmpty()
+        return OnPitch.current(lineup.positions.associate { it.position to it.playerId }, subs)
     }
 
     // 1s clock tick
@@ -236,6 +235,12 @@ fun LiveScreen(
     fun endFlow() {
         flow = ActionFlow.None
         stamp = EventStamp.UNKNOWN
+    }
+
+    /** Open sub mode, stamping the minute now like every other entry flow. */
+    fun openSubs() {
+        subStamp = EventStamp.from(tapMinute())
+        subMode = true
     }
 
     /**
@@ -314,7 +319,13 @@ fun LiveScreen(
                         })
                         DropdownMenuItem(text = { Text("Lineup…") }, onClick = {
                             menuOpen = false
-                            s?.let(onOpenLineup)
+                            // After kickoff the saved lineup is the starting XI
+                            // and must not be overwritten: changes from here on
+                            // are subs (SB-1228).
+                            val started = s != null && MatchClock.stage(
+                                s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
+                            ) != ClockStage.NOT_STARTED
+                            if (started) openSubs() else s?.let(onOpenLineup)
                         })
                         DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
                             menuOpen = false
@@ -491,7 +502,7 @@ fun LiveScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { beginFlow(ActionFlow.SubPickTeam) },
+                        onClick = { openSubs() },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
@@ -687,56 +698,6 @@ fun LiveScreen(
                     },
                 )
 
-                ActionFlow.SubPickTeam -> TeamPickSheet(s, onPick = { flow = ActionFlow.SubPickOut(it) })
-
-                is ActionFlow.SubPickOut -> {
-                    val teamRoster = rosters[currentFlow.teamId].orEmpty()
-                    val pitch = onPitch(currentFlow.teamId)
-                    PlayerPickSheet(
-                        title = stamped(stamp, "Player OFF"),
-                        players = if (pitch != null) teamRoster.filter { it.id in pitch } else teamRoster,
-                        onPick = { out, _ ->
-                            if (out != null) flow = ActionFlow.SubPickIn(currentFlow.teamId, out)
-                        },
-                    )
-                }
-
-                is ActionFlow.SubPickIn -> PlayerPickSheet(
-                    title = "Player ON (for ${currentFlow.out.label})",
-                    players = run {
-                        val pitch = onPitch(currentFlow.teamId)
-                        rosters[currentFlow.teamId].orEmpty().filter {
-                            it.id != currentFlow.out.id && (pitch == null || it.id !in pitch)
-                        }
-                    },
-                    onPick = { inn, _ ->
-                        if (inn != null) {
-                            val at = stamp
-                            // Multi-sub fast path (SB-282): chain straight back
-                            // to Player OFF for the same team — halftime swaps
-                            // are 3-4 subs in a row. Dismiss the sheet to stop.
-                            // beginFlow re-stamps: the next sub is a new event,
-                            // so it gets its own minute rather than inheriting
-                            // this one (SB-652).
-                            beginFlow(ActionFlow.SubPickOut(currentFlow.teamId))
-
-                            act(stamped(at, "Substitution recorded")) {
-                                repo.enqueueSubstitution(
-                                    matchId,
-                                    SubstitutionRequest(
-                                        teamId = currentFlow.teamId,
-                                        playerInId = inn.id,
-                                        playerOutId = currentFlow.out.id,
-                                        matchMinute = at.minute,
-                                        extraTime = at.extraTime,
-                                        clientEventId = UUID.randomUUID().toString(),
-                                    ),
-                                )
-                            }
-                        }
-                    },
-                )
-
                 ActionFlow.CardPickTeam -> TeamPickSheet(s, onPick = { flow = ActionFlow.CardPickType(it) })
 
                 is ActionFlow.CardPickType -> Column(Modifier.padding(16.dp)) {
@@ -787,6 +748,58 @@ fun LiveScreen(
             }
         }
     }
+
+    if (subMode && s != null) {
+        val teams = listOfNotNull(
+            s.homeTeamId?.let { it to s.homeTeamName },
+            s.awayTeamId?.let { it to s.awayTeamName },
+        ).map { (id, name) ->
+            SubTeam(
+                id = id,
+                name = name,
+                formation = lineups[id]?.formationName.orEmpty(),
+                pitch = currentPitch(id),
+                roster = rosters[id].orEmpty(),
+            )
+        }
+        if (teams.isNotEmpty()) {
+            SubModeScreen(
+                teams = teams,
+                initialTeamId = lastSubTeam?.takeIf { id -> teams.any { it.id == id } }
+                    ?: teams.firstOrNull { it.pitch != null }?.id
+                    ?: teams.first().id,
+                minuteLabel = subStamp.label(),
+                onDone = { swapsByTeam ->
+                    val at = subStamp
+                    subMode = false
+                    lastSubTeam = swapsByTeam.keys.lastOrNull() ?: lastSubTeam
+                    val count = swapsByTeam.values.sumOf { it.size }
+                    act(stamped(at, if (count == 1) "Substitution recorded" else "$count subs recorded")) {
+                        swapsByTeam.forEach { (teamId, swaps) ->
+                            swaps.forEach { sw ->
+                                repo.enqueueSubstitution(
+                                    matchId,
+                                    SubstitutionRequest(
+                                        teamId = teamId,
+                                        playerInId = sw.inId,
+                                        playerOutId = sw.outId,
+                                        matchMinute = at.minute,
+                                        extraTime = at.extraTime,
+                                        clientEventId = UUID.randomUUID().toString(),
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                },
+                onClose = { subMode = false },
+                onSetLineup = {
+                    subMode = false
+                    onOpenLineup(s)
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -831,7 +844,7 @@ private fun TeamPickSheet(s: LiveMatchState, onPick: (Int) -> Unit) {
  * or (null, freeText) when the free-text entry is used.
  */
 @Composable
-private fun PlayerPickSheet(
+internal fun PlayerPickSheet(
     title: String,
     players: List<RosterPlayer>,
     allowFreeText: Boolean = false,
