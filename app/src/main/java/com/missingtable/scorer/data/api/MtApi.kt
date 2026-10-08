@@ -143,6 +143,9 @@ interface MtApi {
     @POST("api/matches/{id}/live/substitution")
     suspend fun postSubstitution(@Path("id") matchId: Int, @Body body: SubstitutionRequest): JsonObject
 
+    @POST("api/matches/{id}/live/message")
+    suspend fun postMessage(@Path("id") matchId: Int, @Body body: MessageRequest): JsonObject
+
     @POST("api/matches/{id}/live/clock")
     suspend fun postClock(@Path("id") matchId: Int, @Body body: ClockRequest): JsonObject
 

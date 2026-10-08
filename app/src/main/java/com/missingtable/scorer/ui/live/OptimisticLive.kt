@@ -5,6 +5,7 @@ import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
+import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
@@ -24,6 +25,8 @@ object OptimisticLive {
         pending: List<PendingAction>,
         json: Json,
         rosters: Map<Int, List<RosterPlayer>>,
+        // Who queued chat messages: this device's user (SB-1294).
+        me: Author = Author(),
     ): LiveMatchState {
         var s = server
         var events = server.recentEvents
@@ -101,12 +104,22 @@ object OptimisticLive {
                 PendingAction.ActionType.REOPEN ->
                     s = s.copy(matchEndTime = null, matchStatus = "live")
 
+                PendingAction.ActionType.MESSAGE -> {
+                    val req = json.decodeFromString<MessageRequest>(p.payloadJson)
+                    events = listOf(
+                        pendingEvent(p, "message", teamId = null, message = req.message)
+                            .copy(createdBy = me.userId, createdByUsername = me.username)
+                    ) + events
+                }
+
                 // Lineups are loaded separately; nothing to fold in here.
                 PendingAction.ActionType.LINEUP_SAVE -> {}
             }
         }
         return s.copy(recentEvents = events)
     }
+
+    data class Author(val userId: String? = null, val username: String? = null)
 
     /** Timeline rows with a negative id are pending (not yet on the server). */
     fun isPending(event: MatchEvent): Boolean = event.id < 0
@@ -117,7 +130,7 @@ object OptimisticLive {
     private fun pendingEvent(
         p: PendingAction,
         type: String,
-        teamId: Int,
+        teamId: Int?,
         playerId: Int? = null,
         playerOutId: Int? = null,
         minute: Int? = null,

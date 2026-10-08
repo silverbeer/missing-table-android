@@ -33,7 +33,7 @@ data class PendingAction(
     @ColumnInfo(name = "last_error") val lastError: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,
 ) {
-    enum class ActionType { GOAL, CARD, SUB, CLOCK, DELETE_EVENT, REOPEN, LINEUP_SAVE }
+    enum class ActionType { GOAL, CARD, SUB, CLOCK, DELETE_EVENT, REOPEN, LINEUP_SAVE, MESSAGE }
 
     // FAILED means a 4xx: the server rejected the action outright. The queue
     // pauses there (strict ordering) until the user retries or discards it.

@@ -19,6 +19,8 @@ data class Session(
     val teamId: Int? = null,
     val clubId: Int? = null,
     val displayName: String? = null,
+    // Auth user id — tells your own chat messages apart (SB-1294).
+    val userId: String? = null,
 ) {
     /**
      * Mirrors the backend's require_match_management_permission. A null role
@@ -38,6 +40,7 @@ class TokenStore(private val context: Context) : TokenStorage {
     private val teamIdKey = intPreferencesKey("team_id")
     private val clubIdKey = intPreferencesKey("club_id")
     private val displayNameKey = stringPreferencesKey("display_name")
+    private val userIdKey = stringPreferencesKey("user_id")
 
     val accessTokenFlow = context.authDataStore.data.map { it[accessKey] }
 
@@ -48,11 +51,19 @@ class TokenStore(private val context: Context) : TokenStorage {
             teamId = prefs[teamIdKey],
             clubId = prefs[clubIdKey],
             displayName = prefs[displayNameKey],
+            userId = prefs[userIdKey],
         )
     }
 
-    suspend fun saveSession(role: String?, teamId: Int?, clubId: Int?, displayName: String?) {
+    suspend fun saveSession(
+        role: String?,
+        teamId: Int?,
+        clubId: Int?,
+        displayName: String?,
+        userId: String? = null,
+    ) {
         context.authDataStore.edit { prefs ->
+            if (userId != null) prefs[userIdKey] = userId else prefs.remove(userIdKey)
             if (role != null) prefs[roleKey] = role else prefs.remove(roleKey)
             if (teamId != null) prefs[teamIdKey] = teamId else prefs.remove(teamIdKey)
             if (clubId != null) prefs[clubIdKey] = clubId else prefs.remove(clubIdKey)
