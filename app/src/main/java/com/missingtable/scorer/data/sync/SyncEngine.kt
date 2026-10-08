@@ -4,6 +4,7 @@ import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupSaveRequest
+import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MtApi
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
@@ -129,6 +130,8 @@ class SyncEngine(
             PendingAction.ActionType.DELETE_EVENT ->
                 api.deleteEvent(action.matchId, requireNotNull(action.serverEventId))
             PendingAction.ActionType.REOPEN -> api.reopenMatch(action.matchId)
+            PendingAction.ActionType.MESSAGE ->
+                api.postMessage(action.matchId, json.decodeFromString<MessageRequest>(action.payloadJson))
             PendingAction.ActionType.LINEUP_SAVE ->
                 api.putLineup(
                     action.matchId,

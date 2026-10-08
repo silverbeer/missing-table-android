@@ -92,6 +92,9 @@ data class MatchEvent(
     @SerialName("match_minute") val matchMinute: Int? = null,
     @SerialName("extra_time") val extraTime: Int? = null,
     val message: String = "",
+    // Author of a chat message (SB-1294); set on every event, used for chat rows.
+    @SerialName("created_by") val createdBy: String? = null,
+    @SerialName("created_by_username") val createdByUsername: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
 )
 
@@ -154,6 +157,17 @@ data class GoalRequest(
     @SerialName("extra_time") val extraTime: Int? = null,
     @SerialName("client_event_id") val clientEventId: String,
 )
+
+/** Live chat message (SB-1294). Server caps the text at 500 characters. */
+@Serializable
+data class MessageRequest(
+    val message: String,
+    @SerialName("client_event_id") val clientEventId: String,
+) {
+    companion object {
+        const val MAX_LENGTH = 500
+    }
+}
 
 @Serializable
 data class CardRequest(

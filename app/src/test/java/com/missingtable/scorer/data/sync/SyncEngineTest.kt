@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
+import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MtApi
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.MtDatabase
@@ -284,5 +285,29 @@ class SyncEngineTest {
         assertEquals(SyncEngine.DrainResult.PAUSED, engine.drain())
         assertEquals(PendingAction.Status.FAILED, dao.head()!!.status)
         assertEquals("HTTP 403", dao.head()!!.lastError)
+    }
+
+    @Test
+    fun `chat message syncs in queue order with its idempotency key`() = runBlocking {
+        dao.insert(goalRow("g1"))
+        dao.insert(
+            PendingAction(
+                clientEventId = "m1", matchId = 7,
+                actionType = PendingAction.ActionType.MESSAGE,
+                payloadJson = json.encodeToString(MessageRequest("What a strike", "m1")),
+                createdAt = 2L,
+            )
+        )
+
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+
+        assertEquals(
+            listOf("/api/matches/7/live/goal", "/api/matches/7/live/message"),
+            received.map { it.path },
+        )
+        val body = received[1].body.readUtf8()
+        assertTrue(body.contains("\"message\":\"What a strike\""))
+        assertTrue(body.contains("\"client_event_id\":\"m1\""))
+        assertNull(dao.head())
     }
 }

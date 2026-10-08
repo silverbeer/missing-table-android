@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,9 +18,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -58,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,9 +72,12 @@ import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupResponse
 import com.missingtable.scorer.data.api.LiveMatchState
+import com.missingtable.scorer.data.api.MatchEvent
+import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MatchPatchRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
+import com.missingtable.scorer.data.auth.Session
 import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.ui.common.TeamCrest
@@ -81,6 +89,10 @@ import com.missingtable.scorer.domain.LiveClock
 import com.missingtable.scorer.domain.MatchClock
 import com.missingtable.scorer.domain.OnPitch
 import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -135,10 +147,14 @@ fun LiveScreen(
     val repo = container.liveRepo
     val pending by repo.pendingForMatch(matchId).collectAsState(initial = emptyList())
     val online by container.connectivity.online.collectAsState()
+    val session by container.tokenStore.sessionFlow.collectAsState(initial = Session())
+    // Chat composer draft (SB-1294). Survives rotation like the rest of the screen.
+    var draft by remember { mutableStateOf("") }
 
     // What the UI renders: last server state with the outstanding queue folded
     // in (scores, pending timeline entries, clock timestamps, hidden deletes).
-    val state = serverState?.let { OptimisticLive.merge(it, pending, container.json, rosters) }
+    val me = OptimisticLive.Author(session.userId, session.displayName ?: session.username)
+    val state = serverState?.let { OptimisticLive.merge(it, pending, container.json, rosters, me) }
 
     suspend fun refresh() {
         runCatching { container.api.liveState(matchId) }
@@ -251,6 +267,25 @@ fun LiveScreen(
     fun stamped(at: EventStamp, label: String): String =
         at.label()?.let { "$label $it" } ?: label
 
+    /**
+     * Post the draft as a chat message (SB-1294). Queued like a goal, so it
+     * shows at once and survives a dead signal; no snackbar — the message
+     * appearing in the timeline is the confirmation.
+     */
+    fun sendMessage() {
+        val text = draft.trim()
+        if (text.isEmpty()) return
+        draft = ""
+        scope.launch {
+            runCatching {
+                repo.enqueueMessage(matchId, MessageRequest(text, UUID.randomUUID().toString()))
+            }.onFailure {
+                draft = text
+                snackbar.showSnackbar("Couldn't send message")
+            }
+        }
+    }
+
     val s = state
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -358,6 +393,9 @@ fun LiveScreen(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
+                // Keep the chat composer above the keyboard (edge-to-edge).
+                .imePadding()
                 .padding(horizontal = 12.dp),
         ) {
             // A rejected (4xx) action pauses the whole queue — strict FIFO —
@@ -528,12 +566,32 @@ fun LiveScreen(
             }
             LazyColumn(
                 Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .fillMaxWidth()
                     .padding(top = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(s.recentEvents, key = { it.id }) { e ->
                     val isPending = OptimisticLive.isPending(e)
+                    if (e.eventType == "message") {
+                        ChatRow(
+                            event = e,
+                            isMine = e.createdBy != null && e.createdBy == session.userId,
+                            isPending = isPending,
+                            onDelete = if (readOnly) null else {
+                                {
+                                    act("Message deleted") {
+                                        if (isPending) {
+                                            repo.deletePendingRow(OptimisticLive.pendingRowId(e))
+                                        } else {
+                                            repo.enqueueDeleteEvent(matchId, e.id)
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                        return@items
+                    }
                     Card {
                         Row(
                             Modifier
@@ -581,6 +639,12 @@ fun LiveScreen(
                     }
                 }
             }
+
+            ChatComposer(
+                draft = draft,
+                onDraftChange = { draft = it.take(MessageRequest.MAX_LENGTH) },
+                onSend = ::sendMessage,
+            )
         }
     }
 
@@ -800,6 +864,97 @@ fun LiveScreen(
             )
         }
     }
+}
+
+/** Chat box under the timeline (SB-1294) — iOS LiveMatchView's composer. */
+@Composable
+private fun ChatComposer(draft: String, onDraftChange: (String) -> Unit, onSend: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            placeholder = { Text("Type a message…") },
+            maxLines = 4,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { onSend() }),
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onSend, enabled = draft.isNotBlank()) {
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+        }
+    }
+}
+
+/** A chat message: author, time, text. Your own messages are tinted (iOS ChatRow). */
+@Composable
+private fun ChatRow(event: MatchEvent, isMine: Boolean, isPending: Boolean, onDelete: (() -> Unit)?) {
+    Card(
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (isMine) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        event.createdByUsername ?: "Anonymous",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    chatTime(event.createdAt)?.let {
+                        Text(
+                            " · $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(event.message, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (isPending) {
+                Icon(
+                    Icons.Filled.CloudUpload,
+                    contentDescription = "Waiting to sync",
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (onDelete != null) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete message", modifier = Modifier.size(18.dp))
+                }
+            } else {
+                Spacer(Modifier.size(10.dp))
+            }
+        }
+    }
+}
+
+private val chatTimeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+
+/** Local wall-clock time of a server timestamp, or null for queued rows / bad input. */
+private fun chatTime(createdAt: String?): String? = createdAt?.let {
+    runCatching {
+        OffsetDateTime.parse(it).atZoneSameInstant(ZoneId.systemDefault()).format(chatTimeFormat)
+    }.getOrNull()
 }
 
 @Composable

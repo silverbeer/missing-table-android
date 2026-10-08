@@ -5,6 +5,7 @@ import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupSaveRequest
+import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.data.db.PendingActionDao
@@ -41,6 +42,12 @@ class LiveMatchRepository(
 
     suspend fun enqueueSubstitution(matchId: Int, req: SubstitutionRequest) = enqueue(
         matchId, PendingAction.ActionType.SUB, json.encodeToString(req), req.clientEventId
+    )
+
+    // Chat rides the same queue as scoring (SB-1294): a comment typed at a
+    // pitch with no signal still lands, in order, once the phone reconnects.
+    suspend fun enqueueMessage(matchId: Int, req: MessageRequest) = enqueue(
+        matchId, PendingAction.ActionType.MESSAGE, json.encodeToString(req), req.clientEventId
     )
 
     // Clock actions carry no client_event_id (they're naturally idempotent

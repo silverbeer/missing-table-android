@@ -87,7 +87,7 @@ class AppContainer(app: Application) {
     suspend fun refreshSession() {
         runCatching { api.me() }.onSuccess { me ->
             val p = me.user?.profile ?: return
-            tokenStore.saveSession(p.role, p.teamId, p.clubId, p.displayName ?: p.username)
+            tokenStore.saveSession(p.role, p.teamId, p.clubId, p.displayName ?: p.username, me.user?.id)
         }
     }
 }
