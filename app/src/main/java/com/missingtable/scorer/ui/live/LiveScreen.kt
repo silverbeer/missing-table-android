@@ -5,15 +5,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -59,6 +62,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -389,6 +393,19 @@ fun LiveScreen(
             LiveClock.derive(s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime, s.halfDuration)
         }
 
+        // While the keyboard is up the scoring controls would eat the whole
+        // screen and squeeze the timeline to nothing, hiding the message you
+        // just sent (SB-1296). Fold them away until the keyboard closes.
+        val imeOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        val showControls = !readOnly && !imeOpen
+
+        // Newest events are on top; follow them so a sent message is seen.
+        val timelineState = rememberLazyListState()
+        val newestEventId = s.recentEvents.firstOrNull()?.id
+        LaunchedEffect(newestEventId) {
+            if (newestEventId != null) timelineState.animateScrollToItem(0)
+        }
+
         Column(
             Modifier
                 .fillMaxSize()
@@ -498,7 +515,7 @@ fun LiveScreen(
             // The next clock action, on the scoreboard rather than two taps
             // deep in the overflow (SB-653). One valid action at a time; the
             // corrections (back to 1st half, reopen) stay in the menu.
-            if (!readOnly) {
+            if (showControls) {
                 val stage = MatchClock.stage(
                     s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
                 )
@@ -528,7 +545,7 @@ fun LiveScreen(
             }
 
             // Goal buttons (scorer only)
-            if (!readOnly) {
+            if (showControls) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GoalButton(s.homeTeamName, Modifier.weight(1f)) {
                         s.homeTeamId?.let { beginFlow(ActionFlow.GoalPickScorer(it)) }
@@ -565,7 +582,8 @@ fun LiveScreen(
                 )
             }
             LazyColumn(
-                Modifier
+                state = timelineState,
+                modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(top = 4.dp),
