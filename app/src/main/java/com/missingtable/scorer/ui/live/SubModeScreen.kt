@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +17,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -27,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,8 +71,10 @@ data class SubTeam(
 /**
  * Pitch-based substitutions (SB-1228). Same pitch as the lineup builder, but
  * it shows who is on the field now and never rewrites the starting XI: tap a
- * position, tap the player coming on, repeat, DONE. Each staged swap becomes
- * one substitution event, all at the minute SUB was tapped.
+ * position, tap the player coming on, repeat, DONE. A player already on the
+ * pitch can also swap positions with a teammate (SB-1352) — a sub often comes
+ * with a reshuffle. DONE posts each sub and each net position change as an
+ * event, all at the minute SUB was tapped.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,17 +82,22 @@ fun SubModeScreen(
     teams: List<SubTeam>,
     initialTeamId: Int,
     minuteLabel: String?,
-    onDone: (Map<Int, List<OnPitch.Swap>>) -> Unit,
+    onDone: (Map<Int, List<OnPitch.Change>>) -> Unit,
     onClose: () -> Unit,
     onSetLineup: () -> Unit,
 ) {
     var teamId by remember { mutableStateOf(initialTeamId) }
-    var swapsByTeam by remember { mutableStateOf<Map<Int, List<OnPitch.Swap>>>(emptyMap()) }
+    // Staged changes per team, in the order they were made.
+    var stagedByTeam by remember { mutableStateOf<Map<Int, List<OnPitch.Change>>>(emptyMap()) }
     var pickSlot by remember { mutableStateOf<String?>(null) }
 
     val team = teams.firstOrNull { it.id == teamId } ?: teams.first()
-    val swaps = swapsByTeam[team.id].orEmpty()
-    val staged = swapsByTeam.values.sumOf { it.size }
+    val staged = stagedByTeam[team.id].orEmpty()
+    // What DONE will post, per team: swapping and swapping back nets to nothing.
+    val netByTeam = teams.associate { t ->
+        t.id to (t.pitch?.let { OnPitch.net(it, stagedByTeam[t.id].orEmpty()) } ?: emptyList())
+    }.filterValues { it.isNotEmpty() }
+    val pending = netByTeam.values.sumOf { it.size }
     val byId = team.roster.associateBy { it.id }
 
     Dialog(
@@ -102,9 +115,9 @@ fun SubModeScreen(
                     },
                     actions = {
                         TextButton(
-                            onClick = { onDone(swapsByTeam.filterValues { it.isNotEmpty() }) },
-                            enabled = staged > 0,
-                        ) { Text(if (staged > 0) "DONE ($staged)" else "DONE") }
+                            onClick = { onDone(netByTeam) },
+                            enabled = pending > 0,
+                        ) { Text(if (pending > 0) "DONE ($pending)" else "DONE") }
                     },
                 )
             },
@@ -118,7 +131,7 @@ fun SubModeScreen(
             ) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     teams.forEach { t ->
-                        val n = swapsByTeam[t.id].orEmpty().size
+                        val n = netByTeam[t.id].orEmpty().size
                         FilterChip(
                             selected = t.id == team.id,
                             onClick = { teamId = t.id },
@@ -140,11 +153,11 @@ fun SubModeScreen(
                     NoLineup(team.name, onSetLineup)
                     return@Column
                 }
-                val shown = OnPitch.withSwaps(pitch, swaps)
-                val swapAt = swaps.associateBy { it.position }
+                val shown = OnPitch.current(pitch, staged)
+                val marks = Marks.of(pitch, staged, shown)
 
                 Text(
-                    "Tap the player coming off, then the player coming on.",
+                    "Tap a player to sub them off or move them to another position.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -152,18 +165,22 @@ fun SubModeScreen(
 
                 val slots = Formations.presets[team.formation]
                 if (slots != null && shown.keys.all { code -> slots.any { it.code == code } }) {
-                    PitchSlots(slots, shown, swapAt, byId, onTap = { pickSlot = it })
+                    PitchSlots(slots, shown, marks, byId, onTap = { pickSlot = it })
                 } else {
                     // A formation this app doesn't draw (saved on the web):
                     // same data, as a list.
-                    SlotList(shown, swapAt, byId, onTap = { pickSlot = it })
+                    SlotList(shown, marks, byId, onTap = { pickSlot = it })
                 }
 
-                if (swaps.isNotEmpty()) {
+                val net = netByTeam[team.id].orEmpty()
+                if (net.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
-                    swaps.forEach { sw ->
+                    net.forEach { change ->
                         Text(
-                            "${byId[sw.inId].tag()} ON for ${byId[sw.outId].tag()} (${sw.position})",
+                            when (change) {
+                                is OnPitch.Sub -> "${byId[change.inId].tag()} ON for ${byId[change.outId].tag()}"
+                                is OnPitch.Move -> "${byId[change.playerId].tag()} → ${change.position}"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -174,26 +191,95 @@ fun SubModeScreen(
 
         val slot = pickSlot
         val pitch = team.pitch
-        if (slot != null && pitch != null) {
-            val shown = OnPitch.withSwaps(pitch, swaps)
-            val staging = swaps.firstOrNull { it.position == slot }
-            val outId = staging?.outId ?: pitch[slot]
+        val here = pitch?.let { OnPitch.current(it, staged)[slot] }
+        if (slot != null && pitch != null && here != null) {
+            val shown = OnPitch.current(pitch, staged)
+            val stagedSub = OnPitch.stagedSubFor(staged, here)
+            fun set(next: List<OnPitch.Change>) {
+                stagedByTeam = stagedByTeam + (team.id to next)
+                pickSlot = null
+            }
             ModalBottomSheet(onDismissRequest = { pickSlot = null }) {
-                PlayerPickSheet(
-                    title = "ON for ${byId[outId].tag()} ($slot)",
-                    players = team.roster.filter { it.id !in shown.values },
-                    extraOption = staging?.let { "UNDO — keep ${byId[it.outId].tag()}" },
-                    onExtra = {
-                        swapsByTeam = swapsByTeam + (team.id to swaps.filterNot { it.position == slot })
-                        pickSlot = null
-                    },
-                    onPick = { inn, _ ->
-                        if (inn != null) {
-                            swapsByTeam = swapsByTeam + (team.id to OnPitch.stage(swaps, pitch, slot, inn.id))
-                        }
-                        pickSlot = null
-                    },
-                )
+                Column {
+                    PlayerPickSheet(
+                        title = "ON for ${byId[stagedSub?.outId ?: here].tag()} ($slot)",
+                        players = team.roster.filter { it.id !in shown.values },
+                        extraOption = stagedSub?.let { "UNDO — keep ${byId[it.outId].tag()}" },
+                        onExtra = { set(OnPitch.unstageSub(staged, pitch, slot)) },
+                        onPick = { inn, _ ->
+                            if (inn != null) {
+                                set(OnPitch.stageSub(staged, pitch, slot, inn.id))
+                            } else {
+                                pickSlot = null
+                            }
+                        },
+                    )
+                    SwapWith(
+                        player = byId[here].tag(),
+                        others = shown.filterKeys { it != slot },
+                        byId = byId,
+                        onPick = { other -> set(OnPitch.stageSwap(staged, pitch, slot, other)) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** How sub mode marks a slot: who it replaced (staged sub) and where it moved from. */
+private data class Marks(val cameOnFor: Map<String, Int?>, val movedFrom: Map<String, String>) {
+    companion object {
+        fun of(pitch: Map<String, Int>, staged: List<OnPitch.Change>, shown: Map<String, Int>): Marks {
+            val before = OnPitch.current(pitch, staged.filterIsInstance<OnPitch.Sub>())
+                .entries.associate { (pos, id) -> id to pos }
+            return Marks(
+                cameOnFor = shown.mapNotNull { (pos, id) ->
+                    OnPitch.stagedSubFor(staged, id)?.let { pos to it.outId }
+                }.toMap(),
+                movedFrom = shown.mapNotNull { (pos, id) ->
+                    before[id]?.takeIf { it != pos }?.let { pos to it }
+                }.toMap(),
+            )
+        }
+    }
+}
+
+/** "Or move <player> to…" — the on-pitch teammates to swap positions with (SB-1352). */
+@Composable
+private fun SwapWith(
+    player: String,
+    others: Map<String, Int>,
+    byId: Map<Int, RosterPlayer>,
+    onPick: (String) -> Unit,
+) {
+    if (others.isEmpty()) return
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        Text("Or swap $player's position with", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(12.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 260.dp),
+        ) {
+            items(others.entries.toList(), key = { it.key }) { (code, id) ->
+                OutlinedButton(
+                    onClick = { onPick(code) },
+                    contentPadding = PaddingValues(4.dp),
+                    modifier = Modifier.height(64.dp),
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(code, fontWeight = FontWeight.Bold)
+                        Text(
+                            byId[id]?.let { p -> p.jerseyNumber?.let { "#$it" } ?: p.nameOnly } ?: "?",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
     }
@@ -207,7 +293,7 @@ private fun RosterPlayer?.tag(): String =
 private fun PitchSlots(
     slots: List<Formations.Slot>,
     shown: Map<String, Int>,
-    swapAt: Map<String, OnPitch.Swap>,
+    marks: Marks,
     byId: Map<Int, RosterPlayer>,
     onTap: (String) -> Unit,
 ) {
@@ -223,7 +309,7 @@ private fun PitchSlots(
         slots.forEach { slot ->
             val playerId = shown[slot.code] ?: return@forEach
             val player = byId[playerId]
-            val swapped = slot.code in swapAt
+            val swapped = slot.code in marks.cameOnFor || slot.code in marks.movedFrom
             val markerSize = 46.dp
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -259,9 +345,18 @@ private fun PitchSlots(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                swapAt[slot.code]?.let { sw ->
+                marks.cameOnFor[slot.code]?.let { outId ->
                     Text(
-                        "off ${byId[sw.outId]?.jerseyNumber?.let { "#$it" } ?: "?"}",
+                        "off ${byId[outId]?.jerseyNumber?.let { "#$it" } ?: "?"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+                marks.movedFrom[slot.code]?.let { from ->
+                    Text(
+                        "from $from",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
@@ -276,13 +371,13 @@ private fun PitchSlots(
 @Composable
 private fun SlotList(
     shown: Map<String, Int>,
-    swapAt: Map<String, OnPitch.Swap>,
+    marks: Marks,
     byId: Map<Int, RosterPlayer>,
     onTap: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         shown.forEach { (code, playerId) ->
-            val swapped = code in swapAt
+            val swapped = code in marks.cameOnFor || code in marks.movedFrom
             Surface(
                 onClick = { onTap(code) },
                 shape = MaterialTheme.shapes.medium,
@@ -298,7 +393,8 @@ private fun SlotList(
                 ) {
                     Text(code, fontWeight = FontWeight.Bold, modifier = Modifier.width(48.dp))
                     Text(byId[playerId].tag(), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    swapAt[code]?.let { Text("off ${byId[it.outId].tag()}", style = MaterialTheme.typography.labelSmall) }
+                    marks.cameOnFor[code]?.let { Text("off ${byId[it].tag()}", style = MaterialTheme.typography.labelSmall) }
+                    marks.movedFrom[code]?.let { Text("from $it", style = MaterialTheme.typography.labelSmall) }
                 }
             }
         }
