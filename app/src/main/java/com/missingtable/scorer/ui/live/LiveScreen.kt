@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -85,9 +86,11 @@ import com.missingtable.scorer.ui.theme.StatusColors
 import com.missingtable.scorer.domain.ClockStage
 import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
+import com.missingtable.scorer.domain.HalfTime
 import com.missingtable.scorer.domain.LiveClock
 import com.missingtable.scorer.domain.MatchClock
 import com.missingtable.scorer.domain.OnPitch
+import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -140,6 +143,10 @@ fun LiveScreen(
     var confirmEnd by remember { mutableStateOf(false) }
     var startDialog by remember { mutableStateOf(false) }
     var halfLengthDialog by remember { mutableStateOf(false) }
+    // Second-half start prompt (SB-1350). Holds what to do once the half has
+    // started — the goal/sub/card flow that was blocked — or a no-op when the
+    // overdue START 2ND HALF button opened it.
+    var secondHalfGate by remember { mutableStateOf<((EventStamp) -> Unit)?>(null) }
     var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -242,8 +249,8 @@ fun LiveScreen(
      * goes through here so goals, cards and subs all record the minute of the
      * first tap rather than the last.
      */
-    fun beginFlow(next: ActionFlow) {
-        stamp = EventStamp.from(tapMinute())
+    fun beginFlow(next: ActionFlow, at: EventStamp = EventStamp.from(tapMinute())) {
+        stamp = at
         flow = next
     }
 
@@ -254,9 +261,40 @@ fun LiveScreen(
     }
 
     /** Open sub mode, stamping the minute now like every other entry flow. */
-    fun openSubs() {
-        subStamp = EventStamp.from(tapMinute())
+    fun openSubs(at: EventStamp = EventStamp.from(tapMinute())) {
+        subStamp = at
         subMode = true
+    }
+
+    /**
+     * Run an entry flow, but never at half time (SB-1350): an event entered
+     * then means play has restarted and nobody started the clock. Ask for the
+     * second half first, then run [start] with a second-half minute.
+     */
+    fun gated(start: (EventStamp) -> Unit) {
+        val cur = state
+        val atHalfTime = cur != null && MatchClock.stage(
+            cur.kickoffTime, cur.halftimeStart, cur.secondHalfStart, cur.matchEndTime
+        ) == ClockStage.HALFTIME
+        if (atHalfTime) secondHalfGate = start else start(EventStamp.from(tapMinute()))
+    }
+
+    /**
+     * Start the second half as of [at] and hand the blocked flow its minute.
+     * The stamp is derived from [at] directly: the queued clock action hasn't
+     * reached the merged state yet, so [tapMinute] would still read HT.
+     */
+    fun startSecondHalf(at: Instant, then: (EventStamp) -> Unit) {
+        val cur = state ?: return
+        val late = Duration.between(at, Instant.now()).toMinutes()
+        act(if (late > 0) "2nd half started ${late}m ago" else "2nd half started") {
+            repo.enqueueClock(matchId, ClockRequest("start_second_half", occurredAt = at.toString()))
+        }
+        then(
+            EventStamp.from(
+                LiveClock.derive(cur.kickoffTime, cur.halftimeStart, at.toString(), null, cur.halfDuration)
+            )
+        )
     }
 
     /**
@@ -360,7 +398,7 @@ fun LiveScreen(
                             val started = s != null && MatchClock.stage(
                                 s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
                             ) != ClockStage.NOT_STARTED
-                            if (started) openSubs() else s?.let(onOpenLineup)
+                            if (started) gated { openSubs(it) } else s?.let(onOpenLineup)
                         })
                         DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
                             menuOpen = false
@@ -502,13 +540,40 @@ fun LiveScreen(
                 val stage = MatchClock.stage(
                     s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
                 )
+                // Half-time countdown (SB-1350): the interval is a fixed
+                // length, so say when it's up — and shout once it's overdue.
+                val breakLeft = if (stage == ClockStage.HALFTIME) {
+                    HalfTime.remainingSeconds(s.halftimeStart, Instant.ofEpochMilli(nowTick))
+                } else {
+                    null
+                }
+                val overdue = breakLeft != null && breakLeft < 0
+                if (breakLeft != null) {
+                    Text(
+                        if (overdue) {
+                            "2nd half overdue · ${HalfTime.countdown(breakLeft)}"
+                        } else {
+                            "Half time · ${HalfTime.countdown(breakLeft)} left"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = if (overdue) FontWeight.Bold else FontWeight.Normal,
+                        color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                    )
+                }
                 if (stage.hasPrimaryAction) {
                     Button(
                         onClick = {
-                            when (stage) {
+                            // Late: it probably kicked off a while ago — offer
+                            // to backdate rather than start it now (SB-1350).
+                            when {
+                                overdue -> secondHalfGate = {}
                                 // Starting needs the half-length dialog (SB-645).
-                                ClockStage.NOT_STARTED -> startDialog = true
-                                ClockStage.SECOND_HALF -> confirmEnd = true
+                                stage == ClockStage.NOT_STARTED -> startDialog = true
+                                stage == ClockStage.SECOND_HALF -> confirmEnd = true
                                 else -> MatchClock.primaryAction(stage)?.let { action ->
                                     act(stage.label) {
                                         repo.enqueueClock(
@@ -518,6 +583,14 @@ fun LiveScreen(
                                     }
                                 }
                             }
+                        },
+                        colors = if (overdue) {
+                            ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError,
+                            )
+                        } else {
+                            ButtonDefaults.buttonColors()
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -531,22 +604,22 @@ fun LiveScreen(
             if (!readOnly) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GoalButton(s.homeTeamName, Modifier.weight(1f)) {
-                        s.homeTeamId?.let { beginFlow(ActionFlow.GoalPickScorer(it)) }
+                        s.homeTeamId?.let { id -> gated { beginFlow(ActionFlow.GoalPickScorer(id), it) } }
                     }
                     GoalButton(s.awayTeamName, Modifier.weight(1f)) {
-                        s.awayTeamId?.let { beginFlow(ActionFlow.GoalPickScorer(it)) }
+                        s.awayTeamId?.let { id -> gated { beginFlow(ActionFlow.GoalPickScorer(id), it) } }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { openSubs() },
+                        onClick = { gated { openSubs(it) } },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
                     ) { Text("SUB") }
                     OutlinedButton(
-                        onClick = { beginFlow(ActionFlow.CardPickTeam) },
+                        onClick = { gated { beginFlow(ActionFlow.CardPickTeam, it) } },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
@@ -687,6 +760,18 @@ fun LiveScreen(
                         .onFailure { snackbar.showSnackbar("Couldn't change half length — needs a connection") }
                 }
             },
+        )
+    }
+
+    val gate = secondHalfGate
+    if (gate != null && s != null) {
+        SecondHalfDialog(
+            expectedStart = HalfTime.expectedSecondHalfStart(s.halftimeStart, Instant.ofEpochMilli(nowTick)),
+            onStart = { at ->
+                secondHalfGate = null
+                startSecondHalf(at, gate)
+            },
+            onDismiss = { secondHalfGate = null },
         )
     }
 
@@ -864,6 +949,50 @@ fun LiveScreen(
             )
         }
     }
+}
+
+/**
+ * "Start the 2nd half first" (SB-1350). Offered when an event is entered at
+ * half time, or START 2ND HALF is tapped after the break ran out. When the
+ * break is over, the default is the moment it ended — that's when play most
+ * likely restarted — with "now" as the alternative.
+ */
+@Composable
+private fun SecondHalfDialog(expectedStart: Instant?, onStart: (Instant) -> Unit, onDismiss: () -> Unit) {
+    val now = Instant.now()
+    // Within a minute of now there's nothing worth backdating.
+    val backdate = expectedStart?.takeIf { Duration.between(it, now).toMinutes() >= 1 }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Start the 2nd half first") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (backdate != null) {
+                        "The clock is still on half time. The ${HalfTime.BREAK_MINUTES}-minute break ended at " +
+                            "${chatTime(backdate.toString())} — when did the 2nd half kick off?"
+                    } else {
+                        "The clock is still on half time."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (backdate != null) {
+                    Button(onClick = { onStart(backdate) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("At ${chatTime(backdate.toString())} (end of break)")
+                    }
+                    OutlinedButton(onClick = { onStart(Instant.now()) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Just now")
+                    }
+                } else {
+                    Button(onClick = { onStart(Instant.now()) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("START 2ND HALF")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** Chat box under the timeline (SB-1294) — iOS LiveMatchView's composer. */
