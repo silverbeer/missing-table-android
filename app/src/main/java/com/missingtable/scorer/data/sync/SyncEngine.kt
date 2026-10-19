@@ -6,6 +6,7 @@ import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MtApi
+import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.data.db.PendingActionDao
@@ -124,6 +125,10 @@ class SyncEngine(
             PendingAction.ActionType.SUB ->
                 api.postSubstitution(
                     action.matchId, json.decodeFromString<SubstitutionRequest>(action.payloadJson)
+                )
+            PendingAction.ActionType.POSITION ->
+                api.postPositionChange(
+                    action.matchId, json.decodeFromString<PositionChangeRequest>(action.payloadJson)
                 )
             PendingAction.ActionType.CLOCK ->
                 api.postClock(action.matchId, json.decodeFromString<ClockRequest>(action.payloadJson))

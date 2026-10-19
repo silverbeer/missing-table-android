@@ -3,6 +3,7 @@ package com.missingtable.scorer.ui.live
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.MessageRequest
+import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.db.PendingAction
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -47,5 +48,28 @@ class OptimisticLiveTest {
         assertEquals(1, merged.homeScore)
         assertEquals(0, merged.awayScore)
         assertEquals(2, merged.recentEvents.size)
+    }
+
+    @Test
+    fun `queued position change shows as a pending position_change carrying its position`() {
+        val row = PendingAction(
+            id = 5,
+            clientEventId = "p5",
+            matchId = 7,
+            actionType = PendingAction.ActionType.POSITION,
+            payloadJson = json.encodeToString(
+                PositionChangeRequest(teamId = 1, playerId = 20, position = "RW", matchMinute = 31, clientEventId = "p5")
+            ),
+            createdAt = 5,
+        )
+
+        val merged = OptimisticLive.merge(LiveMatchState(matchId = 7), listOf(row), json, emptyMap())
+
+        val top = merged.recentEvents.single()
+        assertEquals("position_change", top.eventType)
+        assertEquals(20, top.playerId)
+        assertEquals("RW", top.position)
+        assertEquals(31, top.matchMinute)
+        assertTrue(OptimisticLive.isPending(top))
     }
 }

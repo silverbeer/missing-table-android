@@ -76,6 +76,7 @@ import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MatchPatchRequest
+import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.auth.Session
@@ -206,15 +207,22 @@ fun LiveScreen(
     }
 
     // Who is on the pitch now, by position: the starting lineup with
-    // substitution events applied oldest-first. Null when no lineup was saved.
+    // substitution and position-change events (SB-1352) applied oldest-first.
+    // Null when no lineup was saved.
     fun currentPitch(teamId: Int): Map<String, Int>? {
         val lineup = lineups[teamId] ?: return null
-        val subs = state?.recentEvents
-            ?.filter { it.eventType == "substitution" && it.teamId == teamId }
+        val changes = state?.recentEvents
+            ?.filter { it.teamId == teamId }
             ?.reversed()
-            ?.map { OnPitch.Sub(outId = it.playerOutId, inId = it.playerId) }
+            ?.mapNotNull {
+                when (it.eventType) {
+                    "substitution" -> OnPitch.Sub(outId = it.playerOutId, inId = it.playerId)
+                    "position_change" -> OnPitch.Move(playerId = it.playerId, position = it.position)
+                    else -> null
+                }
+            }
             .orEmpty()
-        return OnPitch.current(lineup.positions.associate { it.position to it.playerId }, subs)
+        return OnPitch.current(lineup.positions.associate { it.position to it.playerId }, changes)
     }
 
     // 1s clock tick
@@ -918,25 +926,46 @@ fun LiveScreen(
                     ?: teams.firstOrNull { it.pitch != null }?.id
                     ?: teams.first().id,
                 minuteLabel = subStamp.label(),
-                onDone = { swapsByTeam ->
+                onDone = { changesByTeam ->
                     val at = subStamp
                     subMode = false
-                    lastSubTeam = swapsByTeam.keys.lastOrNull() ?: lastSubTeam
-                    val count = swapsByTeam.values.sumOf { it.size }
-                    act(stamped(at, if (count == 1) "Substitution recorded" else "$count subs recorded")) {
-                        swapsByTeam.forEach { (teamId, swaps) ->
-                            swaps.forEach { sw ->
-                                repo.enqueueSubstitution(
-                                    matchId,
-                                    SubstitutionRequest(
-                                        teamId = teamId,
-                                        playerInId = sw.inId,
-                                        playerOutId = sw.outId,
-                                        matchMinute = at.minute,
-                                        extraTime = at.extraTime,
-                                        clientEventId = UUID.randomUUID().toString(),
-                                    ),
-                                )
+                    lastSubTeam = changesByTeam.keys.lastOrNull() ?: lastSubTeam
+                    val all = changesByTeam.values.flatten()
+                    val subs = all.count { it is OnPitch.Sub }
+                    val moves = all.size - subs
+                    val label = listOfNotNull(
+                        subs.takeIf { it > 0 }?.let { if (it == 1) "1 sub" else "$it subs" },
+                        moves.takeIf { it > 0 }?.let { if (it == 1) "1 position change" else "$it position changes" },
+                    ).joinToString(", ") + " recorded"
+                    act(stamped(at, label)) {
+                        // Queue order is replay order: subs first, then the
+                        // moves that put everyone where they ended up.
+                        changesByTeam.forEach { (teamId, changes) ->
+                            changes.forEach { change ->
+                                when (change) {
+                                    is OnPitch.Sub -> repo.enqueueSubstitution(
+                                        matchId,
+                                        SubstitutionRequest(
+                                            teamId = teamId,
+                                            playerInId = requireNotNull(change.inId),
+                                            playerOutId = requireNotNull(change.outId),
+                                            matchMinute = at.minute,
+                                            extraTime = at.extraTime,
+                                            clientEventId = UUID.randomUUID().toString(),
+                                        ),
+                                    )
+                                    is OnPitch.Move -> repo.enqueuePositionChange(
+                                        matchId,
+                                        PositionChangeRequest(
+                                            teamId = teamId,
+                                            playerId = requireNotNull(change.playerId),
+                                            position = requireNotNull(change.position),
+                                            matchMinute = at.minute,
+                                            extraTime = at.extraTime,
+                                            clientEventId = UUID.randomUUID().toString(),
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }

@@ -6,6 +6,7 @@ import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.MessageRequest
+import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
@@ -82,6 +83,19 @@ object OptimisticLive {
                     ) + events
                 }
 
+                PendingAction.ActionType.POSITION -> {
+                    val req = json.decodeFromString<PositionChangeRequest>(p.payloadJson)
+                    val who = name(rosters, req.teamId, req.playerId, null)
+                    events = listOf(
+                        pendingEvent(
+                            p, "position_change", req.teamId,
+                            playerId = req.playerId, position = req.position,
+                            minute = req.matchMinute, extra = req.extraTime,
+                            message = "Position — $who → ${req.position}",
+                        )
+                    ) + events
+                }
+
                 PendingAction.ActionType.CLOCK -> {
                     val req = json.decodeFromString<ClockRequest>(p.payloadJson)
                     s = when (req.action) {
@@ -133,6 +147,7 @@ object OptimisticLive {
         teamId: Int?,
         playerId: Int? = null,
         playerOutId: Int? = null,
+        position: String? = null,
         minute: Int? = null,
         extra: Int? = null,
         message: String,
@@ -143,6 +158,7 @@ object OptimisticLive {
         teamId = teamId,
         playerId = playerId,
         playerOutId = playerOutId,
+        position = position,
         matchMinute = minute,
         extraTime = extra,
         message = message,

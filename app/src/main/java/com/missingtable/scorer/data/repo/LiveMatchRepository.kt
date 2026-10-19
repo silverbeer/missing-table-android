@@ -6,6 +6,7 @@ import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.MessageRequest
+import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.data.db.PendingActionDao
@@ -42,6 +43,10 @@ class LiveMatchRepository(
 
     suspend fun enqueueSubstitution(matchId: Int, req: SubstitutionRequest) = enqueue(
         matchId, PendingAction.ActionType.SUB, json.encodeToString(req), req.clientEventId
+    )
+
+    suspend fun enqueuePositionChange(matchId: Int, req: PositionChangeRequest) = enqueue(
+        matchId, PendingAction.ActionType.POSITION, json.encodeToString(req), req.clientEventId
     )
 
     // Chat rides the same queue as scoring (SB-1294): a comment typed at a

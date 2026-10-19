@@ -87,6 +87,8 @@ data class MatchEvent(
     @SerialName("player_name") val playerName: String? = null,
     @SerialName("player_id") val playerId: Int? = null,
     @SerialName("player_out_id") val playerOutId: Int? = null,
+    // Where the player moved to, on position_change events (SB-1352).
+    val position: String? = null,
     @SerialName("assist_player_id") val assistPlayerId: Int? = null,
     @SerialName("assist_player_name") val assistPlayerName: String? = null,
     @SerialName("match_minute") val matchMinute: Int? = null,
@@ -185,6 +187,17 @@ data class SubstitutionRequest(
     @SerialName("team_id") val teamId: Int,
     @SerialName("player_in_id") val playerInId: Int,
     @SerialName("player_out_id") val playerOutId: Int,
+    @SerialName("match_minute") val matchMinute: Int? = null,
+    @SerialName("extra_time") val extraTime: Int? = null,
+    @SerialName("client_event_id") val clientEventId: String,
+)
+
+/** A player moving position mid-match (SB-1352): [playerId] now plays [position]. */
+@Serializable
+data class PositionChangeRequest(
+    @SerialName("team_id") val teamId: Int,
+    @SerialName("player_id") val playerId: Int,
+    val position: String,
     @SerialName("match_minute") val matchMinute: Int? = null,
     @SerialName("extra_time") val extraTime: Int? = null,
     @SerialName("client_event_id") val clientEventId: String,
