@@ -130,8 +130,20 @@ object OptimisticLive {
                 PendingAction.ActionType.LINEUP_SAVE -> {}
             }
         }
-        return s.copy(recentEvents = events)
+        // Pending subs/moves extend the full pitch list too, oldest-first, and
+        // queued deletes drop from it (SB-1370).
+        val pitch = s.pitchEvents?.let { server ->
+            val deleted = pending
+                .filter { it.actionType == PendingAction.ActionType.DELETE_EVENT }
+                .mapNotNull { it.serverEventId }
+                .toSet()
+            val queued = events.filter { isPending(it) && it.eventType in PITCH_TYPES }.reversed()
+            server.filterNot { it.id in deleted } + queued
+        }
+        return s.copy(recentEvents = events, pitchEvents = pitch)
     }
+
+    private val PITCH_TYPES = setOf("substitution", "position_change")
 
     data class Author(val userId: String? = null, val username: String? = null)
 

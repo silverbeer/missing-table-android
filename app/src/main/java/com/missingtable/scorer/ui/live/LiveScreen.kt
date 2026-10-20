@@ -211,9 +211,11 @@ fun LiveScreen(
     // Null when no lineup was saved.
     fun currentPitch(teamId: Int): Map<String, Int>? {
         val lineup = lineups[teamId] ?: return null
-        val changes = state?.recentEvents
+        // The full pitch list when the backend sends it; the capped recent
+        // list (newest first, chat included) only as a fallback (SB-1370).
+        val history = state?.let { it.pitchEvents ?: it.recentEvents.reversed() }
+        val changes = history
             ?.filter { it.teamId == teamId }
-            ?.reversed()
             ?.mapNotNull {
                 when (it.eventType) {
                     "substitution" -> OnPitch.Sub(outId = it.playerOutId, inId = it.playerId)
