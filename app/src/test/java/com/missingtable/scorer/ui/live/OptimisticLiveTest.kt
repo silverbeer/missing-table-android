@@ -72,4 +72,32 @@ class OptimisticLiveTest {
         assertEquals(31, top.matchMinute)
         assertTrue(OptimisticLive.isPending(top))
     }
+
+    @Test
+    fun `pending pitch changes append to the full pitch list, deletes drop from it`() {
+        val sub = MatchEvent(id = 10, matchId = 7, eventType = "substitution", teamId = 1, playerId = 20, playerOutId = 9)
+        val gone = MatchEvent(id = 11, matchId = 7, eventType = "position_change", teamId = 1, playerId = 7, position = "ST")
+        val server = LiveMatchState(matchId = 7, pitchEvents = listOf(sub, gone))
+        val delete = PendingAction(
+            id = 4, clientEventId = "d4", matchId = 7,
+            actionType = PendingAction.ActionType.DELETE_EVENT, payloadJson = "{}", createdAt = 4,
+            serverEventId = 11,
+        )
+        val move = PendingAction(
+            id = 5, clientEventId = "p5", matchId = 7,
+            actionType = PendingAction.ActionType.POSITION,
+            payloadJson = json.encodeToString(PositionChangeRequest(1, 20, "RW", clientEventId = "p5")),
+            createdAt = 5,
+        )
+
+        val pitch = OptimisticLive.merge(server, listOf(delete, move), json, emptyMap()).pitchEvents!!
+
+        assertEquals(listOf(10, -5), pitch.map { it.id })
+        assertEquals("RW", pitch.last().position)
+    }
+
+    @Test
+    fun `no pitch list from the server stays null`() {
+        assertNull(OptimisticLive.merge(LiveMatchState(matchId = 7), emptyList(), json, emptyMap()).pitchEvents)
+    }
 }

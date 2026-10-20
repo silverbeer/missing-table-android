@@ -122,6 +122,10 @@ data class LiveMatchState(
     @SerialName("home_team_logo") val homeTeamLogo: String? = null,
     @SerialName("away_team_logo") val awayTeamLogo: String? = null,
     @SerialName("recent_events") val recentEvents: List<MatchEvent> = emptyList(),
+    // Every substitution and position change, oldest first (SB-1369/1370):
+    // recentEvents is the last 50 including chat, so early subs fall out of it.
+    // Null when the backend predates it or couldn't read them.
+    @SerialName("pitch_events") val pitchEvents: List<MatchEvent>? = null,
 )
 
 @Serializable
