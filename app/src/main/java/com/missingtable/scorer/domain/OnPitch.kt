@@ -98,6 +98,18 @@ object OnPitch {
         return subs + moves
     }
 
+    /**
+     * Who can be credited with the assist (SB-1432): the players on [pitch]
+     * other than the scorer, in [roster] order. Only someone on the field can
+     * have assisted, and eleven tiles beat twenty when the ball is still
+     * rolling. With no lineup saved ([pitch] null) it is the whole roster
+     * minus the scorer, as before.
+     */
+    fun <T> assistCandidates(roster: List<T>, id: (T) -> Int, pitch: Map<String, Int>?, scorerId: Int?): List<T> {
+        val onPitch = pitch?.values?.toSet()
+        return roster.filter { id(it) != scorerId && (onPitch == null || id(it) in onPitch) }
+    }
+
     private fun stagedSubOf(staged: List<Change>, playerId: Int): Int =
         staged.indexOfLast { it is Sub && it.inId == playerId }
 

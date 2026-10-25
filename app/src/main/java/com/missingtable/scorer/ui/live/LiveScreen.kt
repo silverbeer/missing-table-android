@@ -104,7 +104,13 @@ import kotlinx.coroutines.launch
 private sealed interface ActionFlow {
     data object None : ActionFlow
     data class GoalPickScorer(val teamId: Int) : ActionFlow
-    data class GoalPickAssist(val teamId: Int, val scorer: RosterPlayer?, val scorerName: String?) : ActionFlow
+    data class GoalPickAssist(
+        val teamId: Int,
+        val scorer: RosterPlayer?,
+        val scorerName: String?,
+        // SB-1432: the bench too, for a sub nobody logged.
+        val everyone: Boolean = false,
+    ) : ActionFlow
     data object CardPickTeam : ActionFlow
     data class CardPickType(val teamId: Int) : ActionFlow
     data class CardPickPlayer(val teamId: Int, val cardType: String) : ActionFlow
@@ -816,46 +822,56 @@ fun LiveScreen(
                     },
                 )
 
-                is ActionFlow.GoalPickAssist -> PlayerPickSheet(
-                    title = stamped(stamp, "Assist?"),
-                    players = rosters[currentFlow.teamId].orEmpty().filter { it.id != currentFlow.scorer?.id },
-                    extraOption = "NO ASSIST",
-                    onExtra = {
-                        val at = stamp
-                        endFlow()
-                        act(stamped(at, "Goal recorded")) {
-                            repo.enqueueGoal(
-                                matchId,
-                                GoalRequest(
-                                    teamId = currentFlow.teamId,
-                                    playerId = currentFlow.scorer?.id,
-                                    playerName = currentFlow.scorerName,
-                                    matchMinute = at.minute,
-                                    extraTime = at.extraTime,
-                                    clientEventId = UUID.randomUUID().toString(),
-                                ),
-                            )
-                        }
-                    },
-                    onPick = { assist, _ ->
-                        val at = stamp
-                        endFlow()
-                        act(stamped(at, "Goal recorded")) {
-                            repo.enqueueGoal(
-                                matchId,
-                                GoalRequest(
-                                    teamId = currentFlow.teamId,
-                                    playerId = currentFlow.scorer?.id,
-                                    playerName = currentFlow.scorerName,
-                                    assistPlayerId = assist?.id,
-                                    matchMinute = at.minute,
-                                    extraTime = at.extraTime,
-                                    clientEventId = UUID.randomUUID().toString(),
-                                ),
-                            )
-                        }
-                    },
-                )
+                is ActionFlow.GoalPickAssist -> {
+                    val pitch = if (currentFlow.everyone) null else currentPitch(currentFlow.teamId)
+                    PlayerPickSheet(
+                        title = stamped(stamp, "Assist?"),
+                        players = OnPitch.assistCandidates(
+                            rosters[currentFlow.teamId].orEmpty(),
+                            { it.id },
+                            pitch,
+                            currentFlow.scorer?.id,
+                        ),
+                        extraOption = "NO ASSIST",
+                        moreOption = if (pitch != null) "Not on the field? Show everyone" else null,
+                        onMore = { flow = currentFlow.copy(everyone = true) },
+                        onExtra = {
+                            val at = stamp
+                            endFlow()
+                            act(stamped(at, "Goal recorded")) {
+                                repo.enqueueGoal(
+                                    matchId,
+                                    GoalRequest(
+                                        teamId = currentFlow.teamId,
+                                        playerId = currentFlow.scorer?.id,
+                                        playerName = currentFlow.scorerName,
+                                        matchMinute = at.minute,
+                                        extraTime = at.extraTime,
+                                        clientEventId = UUID.randomUUID().toString(),
+                                    ),
+                                )
+                            }
+                        },
+                        onPick = { assist, _ ->
+                            val at = stamp
+                            endFlow()
+                            act(stamped(at, "Goal recorded")) {
+                                repo.enqueueGoal(
+                                    matchId,
+                                    GoalRequest(
+                                        teamId = currentFlow.teamId,
+                                        playerId = currentFlow.scorer?.id,
+                                        playerName = currentFlow.scorerName,
+                                        assistPlayerId = assist?.id,
+                                        matchMinute = at.minute,
+                                        extraTime = at.extraTime,
+                                        clientEventId = UUID.randomUUID().toString(),
+                                    ),
+                                )
+                            }
+                        },
+                    )
+                }
 
                 ActionFlow.CardPickTeam -> TeamPickSheet(s, onPick = { flow = ActionFlow.CardPickType(it) })
 
@@ -1165,6 +1181,9 @@ internal fun PlayerPickSheet(
     allowFreeText: Boolean = false,
     extraOption: String? = null,
     onExtra: (() -> Unit)? = null,
+    // A text link under the tiles, for widening a narrowed list (SB-1432).
+    moreOption: String? = null,
+    onMore: (() -> Unit)? = null,
     onPick: (RosterPlayer?, String?) -> Unit,
 ) {
     var freeText by remember { mutableStateOf("") }
@@ -1216,6 +1235,10 @@ internal fun PlayerPickSheet(
                     }
                 }
             }
+        }
+        if (moreOption != null && onMore != null) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onMore, modifier = Modifier.fillMaxWidth()) { Text(moreOption) }
         }
         if (allowFreeText) {
             Spacer(Modifier.height(12.dp))

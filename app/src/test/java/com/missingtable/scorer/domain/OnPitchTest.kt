@@ -123,4 +123,31 @@ class OnPitchTest {
     fun `staging an empty slot does nothing`() {
         assertEquals(emptyList<OnPitch.Change>(), OnPitch.stageSub(emptyList(), xi, "RW", 14))
     }
+
+    // Roster in jersey order, with two on the bench (14, 15).
+    private val roster = listOf(1, 2, 9, 14, 15)
+
+    private fun assists(pitch: Map<String, Int>?, scorer: Int?) =
+        OnPitch.assistCandidates(roster, { it }, pitch, scorer)
+
+    @Test
+    fun `assist candidates are the players on the pitch minus the scorer, keeper included`() {
+        assertEquals(listOf(1, 2), assists(xi, scorer = 9))
+    }
+
+    @Test
+    fun `assist candidates follow subs`() {
+        val now = OnPitch.current(xi, listOf(OnPitch.Sub(outId = 2, inId = 14)))
+        assertEquals(listOf(1, 14), assists(now, scorer = 9))
+    }
+
+    @Test
+    fun `with no lineup every roster player but the scorer can assist`() {
+        assertEquals(listOf(1, 2, 14, 15), assists(null, scorer = 9))
+    }
+
+    @Test
+    fun `a free-text scorer leaves the whole pitch available`() {
+        assertEquals(listOf(1, 2, 9), assists(xi, scorer = null))
+    }
 }
