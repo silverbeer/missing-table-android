@@ -51,6 +51,10 @@ data class MatchSummary(
     @SerialName("season_id") val seasonId: Int? = null,
     @SerialName("age_group_id") val ageGroupId: Int? = null,
     @SerialName("age_group_name") val ageGroupName: String? = null,
+    // A side that played up/down fielded its own age group; null = same as
+    // the match (SB-1444). The age chip matches on any of the three (SB-1446).
+    @SerialName("home_age_group_id") val homeAgeGroupId: Int? = null,
+    @SerialName("away_age_group_id") val awayAgeGroupId: Int? = null,
     @SerialName("match_type_name") val matchTypeName: String? = null,
     // The competition filter keys on the id, not the name: the name is what a
     // chip says, the id is what it selects (SB-1107).
