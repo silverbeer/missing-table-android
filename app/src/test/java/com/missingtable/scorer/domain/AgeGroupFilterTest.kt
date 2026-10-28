@@ -20,6 +20,8 @@ class AgeGroupFilterTest {
         status: String?,
         ageGroupId: Int?,
         ageGroupName: String? = null,
+        homeAgeGroupId: Int? = null,
+        awayAgeGroupId: Int? = null,
     ) = MatchSummary(
         id = id,
         matchDate = date,
@@ -27,12 +29,13 @@ class AgeGroupFilterTest {
         awayTeamId = 2,
         ageGroupId = ageGroupId,
         ageGroupName = ageGroupName,
+        homeAgeGroupId = homeAgeGroupId,
+        awayAgeGroupId = awayAgeGroupId,
         matchStatus = status,
     )
 
-    /** Mirrors the screen: null age group means "All". */
-    private fun filter(rows: List<MatchSummary>, ageGroupId: Int?) =
-        ageGroupId?.let { id -> rows.filter { it.ageGroupId == id } } ?: rows
+    /** The screen's filter: null age group means "All". */
+    private fun filter(rows: List<MatchSummary>, ageGroupId: Int?) = AgeGroups.filter(rows, ageGroupId)
 
     private val squad = listOf(
         match(1, "2026-08-22", "scheduled", 3, "U15"),
@@ -101,5 +104,34 @@ class AgeGroupFilterTest {
         // The screen shows an explicit "no matches for this age group" rather
         // than silently falling back — falling back would be worse.
         assertTrue(filter(squad, 99).isEmpty())
+    }
+
+    // Playing up (SB-1446): IFA U15 vs New England Revolution U16, match 10106.
+    private val playingUp = match(10106, "2026-10-28", "scheduled", 3, "U15", awayAgeGroupId = 4)
+
+    @Test
+    fun `a playing-up match shows under its own age group and the side's`() {
+        val rows = squad + playingUp
+        assertTrue(filter(rows, 3).any { it.id == 10106 })
+        assertTrue(filter(rows, 4).any { it.id == 10106 })
+        assertTrue(filter(rows, null).any { it.id == 10106 })
+    }
+
+    @Test
+    fun `a playing-up match does not leak into unrelated age groups`() {
+        assertTrue(filter(squad + playingUp, 2).none { it.id == 10106 })
+    }
+
+    @Test
+    fun `a home side playing up counts too`() {
+        val homeUp = match(7, "2026-10-28", "scheduled", 2, "U14", homeAgeGroupId = 3)
+        assertEquals(listOf(1, 4, 7), filter(squad + homeUp, 3).map { it.id })
+    }
+
+    @Test
+    fun `fielded age groups collapse a side override equal to the match`() {
+        assertEquals(setOf(3, 4), AgeGroups.fielded(playingUp))
+        assertEquals(setOf(3), AgeGroups.fielded(match(8, today, null, 3, homeAgeGroupId = 3)))
+        assertEquals(emptySet<Int>(), AgeGroups.fielded(match(9, today, null, null)))
     }
 }

@@ -46,6 +46,7 @@ import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.data.api.MatchTypeDto
 import com.missingtable.scorer.data.api.Motw
 import com.missingtable.scorer.ui.common.TeamCrest
+import com.missingtable.scorer.domain.AgeGroups
 import com.missingtable.scorer.domain.Competitions
 import com.missingtable.scorer.domain.Conferences
 import com.missingtable.scorer.domain.MatchBucketing
@@ -147,7 +148,7 @@ fun MatchListScreen(
         .mapNotNull { m -> m.ageGroupId?.let { it to (m.ageGroupName ?: "U?") } }
         .distinct()
         .sortedBy { it.second }
-    val byAge = ageGroup?.let { id -> matches.filter { it.ageGroupId == id } } ?: matches
+    val byAge = AgeGroups.filter(matches, ageGroup)
 
     // Conferences come from what this age group plays, so switching age group
     // re-offers them — and prunes a selection the new group does not play,
