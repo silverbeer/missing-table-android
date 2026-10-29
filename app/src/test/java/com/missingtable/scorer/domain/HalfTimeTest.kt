@@ -32,6 +32,35 @@ class HalfTimeTest {
         assertEquals("0:00", HalfTime.countdown(0))
     }
 
+    private val kickoff = "2026-10-18T10:00:00+00:00"
+    private fun played(minutes: Long, seconds: Long = 0): Instant =
+        Instant.parse("2026-10-18T10:00:00Z").plusSeconds(minutes * 60 + seconds)
+
+    @Test
+    fun `halftime 14 minutes into a 45 minute half is early`() {
+        assertEquals(14L, HalfTime.earlyHalftimeMinute(kickoff, 45, played(14, 3)))
+    }
+
+    @Test
+    fun `halftime within the margin of the half length is not early`() {
+        assertEquals(39L, HalfTime.earlyHalftimeMinute(kickoff, 45, played(39, 59)))
+        assertNull(HalfTime.earlyHalftimeMinute(kickoff, 45, played(40)))
+        assertNull(HalfTime.earlyHalftimeMinute(kickoff, 45, played(45)))
+        assertNull(HalfTime.earlyHalftimeMinute(kickoff, 45, played(48)))
+    }
+
+    @Test
+    fun `threshold follows the half length`() {
+        assertEquals(20L, HalfTime.earlyHalftimeMinute(kickoff, 30, played(20)))
+        assertNull(HalfTime.earlyHalftimeMinute(kickoff, 30, played(25)))
+    }
+
+    @Test
+    fun `no kickoff means no warning`() {
+        assertNull(HalfTime.earlyHalftimeMinute(null, 45, played(10)))
+        assertNull(HalfTime.earlyHalftimeMinute("garbage", 45, played(10)))
+    }
+
     @Test
     fun `late start is backdated to the end of the break`() {
         assertEquals(at(600), HalfTime.expectedSecondHalfStart(ht, at(900)))
