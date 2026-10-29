@@ -37,6 +37,17 @@ interface MtApi {
     @PATCH("api/matches/{id}")
     suspend fun patchMatch(@Path("id") matchId: Int, @Body body: MatchPatchRequest)
 
+    /** Recent form, common opponents and head-to-head for a fixture (SB-1456). */
+    @GET("api/matches/preview/{homeTeamId}/{awayTeamId}")
+    suspend fun matchPreview(
+        @Path("homeTeamId") homeTeamId: Int,
+        @Path("awayTeamId") awayTeamId: Int,
+        @Query("season_id") seasonId: Int? = null,
+        @Query("age_group_id") ageGroupId: Int? = null,
+        @Query("recent_count") recentCount: Int = 5,
+        @Query("match_type_id") matchTypeId: Int? = null,
+    ): MatchPreviewResponse
+
     @GET("api/matches/{id}/live")
     suspend fun liveState(@Path("id") matchId: Int): LiveMatchState
 
