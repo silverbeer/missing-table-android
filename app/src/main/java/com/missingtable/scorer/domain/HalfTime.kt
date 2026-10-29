@@ -50,6 +50,22 @@ object HalfTime {
         return if (played < threshold) played.toMinutes().coerceAtLeast(0) else null
     }
 
+    /**
+     * How far into the break START 2ND HALF goes straight through. Sooner
+     * than this is a double tap or a misread, not a restart (SB-1450).
+     */
+    const val EARLY_SECOND_HALF_MINUTES = 3L
+
+    /**
+     * Seconds into the break when START 2ND HALF is tapped this early, or
+     * null when the break has run long enough to need no warning.
+     */
+    fun earlySecondHalfSeconds(halftimeStart: String?, now: Instant = Instant.now()): Long? {
+        val start = parse(halftimeStart) ?: return null
+        val into = Duration.between(start, now)
+        return if (into < Duration.ofMinutes(EARLY_SECOND_HALF_MINUTES)) into.seconds.coerceAtLeast(0) else null
+    }
+
     /** "7:42", or "+2:15" once overdue. */
     fun countdown(remaining: Long): String {
         val s = kotlin.math.abs(remaining)
