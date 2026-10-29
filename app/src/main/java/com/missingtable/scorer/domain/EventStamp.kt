@@ -24,6 +24,14 @@ data class EventStamp(val minute: Int?, val extraTime: Int?) {
     companion object {
         val UNKNOWN = EventStamp(null, null)
 
-        fun from(clock: LiveClock.ClockText) = EventStamp(clock.minute, clock.extraTime)
+        /**
+         * The most stoppage time the backend accepts on an event (`le=30`).
+         * A clock running fast — #10106's read 90+30' — must not stamp more:
+         * a rejected event pauses the whole sync queue (SB-1451).
+         */
+        const val MAX_EXTRA_TIME = 30
+
+        fun from(clock: LiveClock.ClockText) =
+            EventStamp(clock.minute, clock.extraTime?.coerceAtMost(MAX_EXTRA_TIME))
     }
 }

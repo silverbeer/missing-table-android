@@ -89,4 +89,10 @@ class EventStampTest {
         val ft = LiveClock.derive(kickoff, null, null, "2026-09-05T11:50:00+00:00", 45)
         assertNull(EventStamp.from(ft).minute)
     }
+
+    @Test
+    fun `extra time is capped at what the backend accepts`() {
+        assertEquals(EventStamp(90, 30), EventStamp.from(LiveClock.ClockText("125:10", 90, 35)))
+        assertEquals(EventStamp(90, 12), EventStamp.from(LiveClock.ClockText("102:00", 90, 12)))
+    }
 }
