@@ -81,8 +81,8 @@ class AppContainer(app: Application) {
 
     /**
      * Pull /api/auth/me and cache role/team/club (SB-317). Best-effort: on
-     * failure the previous cached session stands (canScore defaults open
-     * until a first success — the server enforces the real permissions).
+     * failure the previous cached session stands. Scoring permission is not
+     * read from here: it is per match, as the server's can_manage (SB-1455).
      */
     suspend fun refreshSession() {
         runCatching { api.me() }.onSuccess { me ->

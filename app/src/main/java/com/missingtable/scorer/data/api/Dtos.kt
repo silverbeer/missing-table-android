@@ -69,6 +69,10 @@ data class MatchSummary(
     // across competitions (Florida under League and under Flex), so the name
     // does not identify one (SB-1110).
     @SerialName("division_id") val divisionId: Int? = null,
+    // May this viewer score or edit this match (SB-1454)? The server decides:
+    // a club manager manages only their club's matches, a fan none. Absent
+    // (older backend) means no.
+    @SerialName("can_manage") val canManage: Boolean = false,
     @SerialName("match_status") val matchStatus: String? = null,
 )
 

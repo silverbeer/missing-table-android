@@ -21,15 +21,7 @@ data class Session(
     val displayName: String? = null,
     // Auth user id — tells your own chat messages apart (SB-1294).
     val userId: String? = null,
-) {
-    /**
-     * Mirrors the backend's require_match_management_permission. A null role
-     * (me() never succeeded yet) defaults to true so the historical scorer
-     * flow keeps working offline — the server still enforces the real answer.
-     */
-    val canScore: Boolean
-        get() = role == null || role in setOf("admin", "club_manager", "team-manager", "team_manager")
-}
+)
 
 class TokenStore(private val context: Context) : TokenStorage {
 

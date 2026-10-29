@@ -24,7 +24,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,7 +33,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.missingtable.scorer.data.auth.Session
+import com.missingtable.scorer.domain.MatchDetail
 import com.missingtable.scorer.ui.leaderboard.LeaderboardScreen
 import com.missingtable.scorer.ui.live.LiveScreen
 import com.missingtable.scorer.ui.login.LoginScreen
@@ -104,30 +103,12 @@ private fun AppNav(container: AppContainer, startDestination: String) {
             )
         }
         composable("home") {
-            val session by container.tokenStore.sessionFlow.collectAsState(initial = Session())
             HomeShell(
                 container = container,
-                onOpenMatch = { match ->
-                    val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
-                    when {
-                        // Fans/players get the read-only live view (SB-318/320);
-                        // scorers keep the lineup/live flow.
-                        !session.canScore ->
-                            navController.navigate("live/${match.id}?readOnly=true&$common")
-                        match.matchStatus == "scheduled" -> {
-                            val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
-                                "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
-                                "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
-                            navController.navigate(
-                                "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
-                            )
-                        }
-                        // Completed matches open the post-match editor (SB-281).
-                        match.matchStatus == "completed" ->
-                            navController.navigate("postmatch/${match.id}?$common")
-                        else -> navController.navigate("live/${match.id}?$common")
-                    }
-                },
+                // Every tap opens the match first (SB-1455): fans get the
+                // preview and result, and scoring is a button there for those
+                // the server says may manage this match.
+                onOpenMatch = { match -> navController.navigate("match/${match.id}") },
                 onLogout = {
                     runBlocking { container.tokenStore.clear() }
                     navController.navigate("login") {
@@ -167,6 +148,33 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                         ) {
                             popUpTo("matches")
                         }
+                    }
+                },
+            )
+        }
+        composable("match/{matchId}") { entry ->
+            val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
+            com.missingtable.scorer.ui.match.MatchDetailScreen(
+                container = container,
+                matchId = matchId,
+                onBack = { navController.popBackStack() },
+                onAction = { match, action ->
+                    val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
+                    when (action) {
+                        MatchDetail.Action.LINEUP_AND_KICKOFF -> {
+                            val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
+                                "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
+                                "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
+                            navController.navigate(
+                                "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
+                            )
+                        }
+                        MatchDetail.Action.SCORE_LIVE -> navController.navigate("live/${match.id}?$common")
+                        // The read-only live view (SB-318/320).
+                        MatchDetail.Action.WATCH_LIVE ->
+                            navController.navigate("live/${match.id}?readOnly=true&$common")
+                        // The post-match editor (SB-281).
+                        MatchDetail.Action.EDIT_RESULT -> navController.navigate("postmatch/${match.id}?$common")
                     }
                 },
             )
