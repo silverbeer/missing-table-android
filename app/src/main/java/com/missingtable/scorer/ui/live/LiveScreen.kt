@@ -695,7 +695,8 @@ fun LiveScreen(
             Text("Timeline", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             if (s.recentEvents.isEmpty()) {
                 Text(
-                    "No events yet — kick off and start scoring.",
+                    // A fan watching can't kick off (SB-1457).
+                    if (readOnly) "No events yet." else "No events yet — kick off and start scoring.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),

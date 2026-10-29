@@ -6,7 +6,7 @@ appId: com.missingtable.scorer.local
 - launchApp:
     clearState: true
 - assertVisible: 'Missing Table'
-- assertVisible: 'Match-day live scoring'
+- assertVisible: 'Fixtures, results and live scores'
 - assertVisible: 'Username'
 - assertVisible: 'Password'
 - assertVisible: 'Sign in'

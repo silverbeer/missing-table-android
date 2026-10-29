@@ -111,8 +111,9 @@ fun LoginScreen(container: AppContainer, onLoggedIn: () -> Unit) {
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold,
         )
+        // For fans as much as scorers (SB-1457): team parents sign in here too.
         Text(
-            "Match-day live scoring",
+            "Fixtures, results and live scores",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

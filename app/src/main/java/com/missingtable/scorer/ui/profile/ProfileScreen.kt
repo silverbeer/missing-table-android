@@ -90,7 +90,7 @@ fun ProfileScreen(container: AppContainer, onLogout: () -> Unit) {
         Spacer(Modifier.weight(1f))
         HorizontalDivider()
         Text(
-            "MT Scorer ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+            "Missing Table ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
