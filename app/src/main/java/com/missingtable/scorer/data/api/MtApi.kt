@@ -28,6 +28,10 @@ interface MtApi {
         @Query("end_date") endDate: String? = null,
     ): List<MatchSummary>
 
+    /** One match, with whether this viewer may manage it (SB-1454/SB-1455). */
+    @GET("api/matches/{id}")
+    suspend fun match(@Path("id") matchId: Int): MatchSummary
+
     /**
      * Correct the half length after kickoff (SB-678). start_first_half is
      * idempotent, so the clock endpoint cannot revise it — this is the only
