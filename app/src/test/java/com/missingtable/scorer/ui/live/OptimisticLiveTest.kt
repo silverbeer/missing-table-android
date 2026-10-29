@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.live
 
+import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.MessageRequest
@@ -99,5 +100,34 @@ class OptimisticLiveTest {
     @Test
     fun `no pitch list from the server stays null`() {
         assertNull(OptimisticLive.merge(LiveMatchState(matchId = 7), emptyList(), json, emptyMap()).pitchEvents)
+    }
+
+    private fun clockRow(id: Long, action: String) = PendingAction(
+        id = id, clientEventId = "c$id", matchId = 7,
+        actionType = PendingAction.ActionType.CLOCK,
+        payloadJson = json.encodeToString(ClockRequest(action)),
+        createdAt = id,
+    )
+
+    private val inSecondHalf = LiveMatchState(
+        matchId = 7,
+        kickoffTime = "2026-10-28T22:30:56+00:00",
+        halftimeStart = "2026-10-28T22:44:59+00:00",
+        secondHalfStart = "2026-10-28T22:45:33+00:00",
+    )
+
+    @Test
+    fun `queued back to 1st half clears half time and the second half`() {
+        val merged = OptimisticLive.merge(inSecondHalf, listOf(clockRow(1, "cancel_halftime")), json, emptyMap())
+        assertNull(merged.halftimeStart)
+        assertNull(merged.secondHalfStart)
+        assertEquals(inSecondHalf.kickoffTime, merged.kickoffTime)
+    }
+
+    @Test
+    fun `queued back to half time clears only the second half`() {
+        val merged = OptimisticLive.merge(inSecondHalf, listOf(clockRow(1, "cancel_second_half")), json, emptyMap())
+        assertEquals(inSecondHalf.halftimeStart, merged.halftimeStart)
+        assertNull(merged.secondHalfStart)
     }
 }

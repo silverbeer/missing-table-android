@@ -66,4 +66,34 @@ object MatchClock {
         ClockStage.SECOND_HALF -> "end_match"
         ClockStage.ENDED -> null
     }
+
+    /**
+     * The ways back from a stage, nearest first (SB-1450). A clock tapped on
+     * by mistake must always have an obvious undo: #10106 went to half time
+     * 14' in and to the second half 34s later, and nothing could reverse it.
+     */
+    fun corrections(stage: ClockStage): List<ClockCorrection> = when (stage) {
+        ClockStage.HALFTIME -> listOf(ClockCorrection.BACK_TO_FIRST_HALF)
+        ClockStage.SECOND_HALF -> listOf(ClockCorrection.BACK_TO_HALF_TIME, ClockCorrection.BACK_TO_FIRST_HALF)
+        else -> emptyList()
+    }
+
+    /** The correction that undoes a clock action just taken, if it has one. */
+    fun undoOf(action: String): ClockCorrection? = when (action) {
+        "start_halftime" -> ClockCorrection.BACK_TO_FIRST_HALF
+        "start_second_half" -> ClockCorrection.BACK_TO_HALF_TIME
+        else -> null
+    }
+}
+
+/**
+ * Stepping the clock back (SB-1449/SB-1450). The backend clears the undone
+ * timestamps and re-times events logged on them.
+ */
+enum class ClockCorrection(val label: String, val action: String) {
+    /** Clears half time and any second half: the clock reads time since kickoff. */
+    BACK_TO_FIRST_HALF("Back to 1st half", "cancel_halftime"),
+
+    /** Clears the second half: the half-time countdown resumes. */
+    BACK_TO_HALF_TIME("Back to half time", "cancel_second_half"),
 }

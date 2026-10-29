@@ -43,7 +43,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -87,6 +89,7 @@ import com.missingtable.scorer.ui.theme.StatusColors
 import com.missingtable.scorer.domain.ClockStage
 import com.missingtable.scorer.domain.EventStamp
 import com.missingtable.scorer.domain.HalfDuration
+import com.missingtable.scorer.domain.ClockCorrection
 import com.missingtable.scorer.domain.HalfTime
 import com.missingtable.scorer.domain.LiveClock
 import com.missingtable.scorer.domain.MatchClock
@@ -153,6 +156,10 @@ fun LiveScreen(
     // HALFTIME tapped well short of the half length (SB-1448): the tap time,
     // so a confirmed halftime is stamped when it was tapped, not confirmed.
     var earlyHalftimeAt by remember { mutableStateOf<Instant?>(null) }
+    // START 2ND HALF tapped moments into the break (SB-1450).
+    var earlySecondHalf by remember { mutableStateOf(false) }
+    // A clock correction from the menu, awaiting confirmation (SB-1450).
+    var correction by remember { mutableStateOf<ClockCorrection?>(null) }
     // Second-half start prompt (SB-1350). Holds what to do once the half has
     // started — the goal/sub/card flow that was blocked — or a no-op when the
     // overdue START 2ND HALF button opened it.
@@ -246,11 +253,39 @@ fun LiveScreen(
 
     // Mutations land in the local queue (instant, works offline); the
     // optimistic merge shows them immediately and SyncEngine ships them FIFO.
-    fun act(label: String, block: suspend () -> Unit) {
+    //
+    // With [undo], the snackbar carries an Undo button and stays up longer: a
+    // clock step taken by mistake is fixed in one tap, right where the eye is
+    // (SB-1450), not by finding the right item in the overflow menu.
+    fun act(label: String, undo: (suspend () -> Unit)? = null, block: suspend () -> Unit) {
         scope.launch {
             runCatching { block() }
-                .onSuccess { snackbar.showSnackbar(label) }
+                .onSuccess {
+                    if (undo == null) {
+                        snackbar.showSnackbar(label)
+                    } else {
+                        val result = snackbar.showSnackbar(label, actionLabel = "Undo", duration = SnackbarDuration.Long)
+                        if (result == SnackbarResult.ActionPerformed) {
+                            runCatching { undo() }
+                                .onSuccess { snackbar.showSnackbar("Undone: $label") }
+                                .onFailure { snackbar.showSnackbar("Failed to undo: $label") }
+                        }
+                    }
+                }
                 .onFailure { snackbar.showSnackbar("Failed: $label") }
+        }
+    }
+
+    /** Queue a clock correction (SB-1449): the backend re-times events too. */
+    suspend fun correct(c: ClockCorrection) {
+        repo.enqueueClock(matchId, ClockRequest(c.action))
+    }
+
+    /** A forward clock step, undoable from its snackbar when it has an undo. */
+    fun clockStep(label: String, action: String, at: Instant) {
+        val undo = MatchClock.undoOf(action)
+        act(label, undo = undo?.let { c -> { correct(c) } }) {
+            repo.enqueueClock(matchId, ClockRequest(action, occurredAt = at.toString()))
         }
     }
 
@@ -306,9 +341,7 @@ fun LiveScreen(
     fun startSecondHalf(at: Instant, then: (EventStamp) -> Unit) {
         val cur = state ?: return
         val late = Duration.between(at, Instant.now()).toMinutes()
-        act(if (late > 0) "2nd half started ${late}m ago" else "2nd half started") {
-            repo.enqueueClock(matchId, ClockRequest("start_second_half", occurredAt = at.toString()))
-        }
+        clockStep(if (late > 0) "2nd half started ${late}m ago" else "2nd half started", "start_second_half", at)
         then(
             EventStamp.from(
                 LiveClock.derive(cur.kickoffTime, cur.halftimeStart, at.toString(), null, cur.halfDuration)
@@ -419,14 +452,23 @@ fun LiveScreen(
                             ) != ClockStage.NOT_STARTED
                             if (started) gated { openSubs(it) } else s?.let(onOpenLineup)
                         })
-                        DropdownMenuItem(text = { Text("Back to 1st half") }, onClick = {
-                            menuOpen = false
-                            act("Back to 1st half") { repo.enqueueClock(matchId, ClockRequest("cancel_halftime")) }
-                        })
-                        DropdownMenuItem(text = { Text("Reopen match") }, onClick = {
-                            menuOpen = false
-                            act("Match reopened") { repo.enqueueReopen(matchId) }
-                        })
+                        // Only the corrections valid right now (SB-1450): from
+                        // the 2nd half, both half time and the 1st half.
+                        val menuStage = s?.let {
+                            MatchClock.stage(it.kickoffTime, it.halftimeStart, it.secondHalfStart, it.matchEndTime)
+                        }
+                        menuStage?.let(MatchClock::corrections)?.forEach { c ->
+                            DropdownMenuItem(text = { Text("${c.label}…") }, onClick = {
+                                menuOpen = false
+                                correction = c
+                            })
+                        }
+                        if (menuStage == ClockStage.ENDED) {
+                            DropdownMenuItem(text = { Text("Reopen match") }, onClick = {
+                                menuOpen = false
+                                act("Match reopened") { repo.enqueueReopen(matchId) }
+                            })
+                        }
                     }
                 },
             )
@@ -597,13 +639,12 @@ fun LiveScreen(
                                 stage == ClockStage.FIRST_HALF &&
                                     HalfTime.earlyHalftimeMinute(s.kickoffTime, s.halfDuration) != null ->
                                     earlyHalftimeAt = Instant.now()
+                                // ...and to the second half 34s later (SB-1450).
+                                stage == ClockStage.HALFTIME &&
+                                    HalfTime.earlySecondHalfSeconds(s.halftimeStart) != null ->
+                                    earlySecondHalf = true
                                 else -> MatchClock.primaryAction(stage)?.let { action ->
-                                    act(stage.label) {
-                                        repo.enqueueClock(
-                                            matchId,
-                                            ClockRequest(action, occurredAt = Instant.now().toString()),
-                                        )
-                                    }
+                                    clockStep(stage.label, action, Instant.now())
                                 }
                             }
                         },
@@ -790,6 +831,7 @@ fun LiveScreen(
     if (gate != null && s != null) {
         SecondHalfDialog(
             expectedStart = HalfTime.expectedSecondHalfStart(s.halftimeStart, Instant.ofEpochMilli(nowTick)),
+            earlyBreakSeconds = HalfTime.earlySecondHalfSeconds(s.halftimeStart, Instant.ofEpochMilli(nowTick)),
             onStart = { at ->
                 secondHalfGate = null
                 startSecondHalf(at, gate)
@@ -810,15 +852,64 @@ fun LiveScreen(
             confirmButton = {
                 TextButton(onClick = {
                     earlyHalftimeAt = null
-                    act(ClockStage.FIRST_HALF.label) {
-                        repo.enqueueClock(matchId, ClockRequest("start_halftime", occurredAt = earlyAt.toString()))
-                    }
+                    clockStep(ClockStage.FIRST_HALF.label, "start_halftime", earlyAt)
                 }) { Text("Half time") }
             },
             dismissButton = {
                 // The safe choice gets the emphasis: a stray tap is the likely case.
                 Button(onClick = { earlyHalftimeAt = null }) { Text("Keep playing") }
             },
+        )
+    }
+
+    if (earlySecondHalf && s != null) {
+        val into = HalfTime.earlySecondHalfSeconds(s.halftimeStart, Instant.ofEpochMilli(nowTick)) ?: 0
+        AlertDialog(
+            onDismissRequest = { earlySecondHalf = false },
+            title = { Text("Start the 2nd half?") },
+            text = {
+                Text(
+                    "Half time only began ${HalfTime.countdown(into)} ago. " +
+                        "Are you sure the 2nd half has kicked off?"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    earlySecondHalf = false
+                    startSecondHalf(Instant.now()) {}
+                }) { Text("Start 2nd half") }
+            },
+            dismissButton = {
+                Button(onClick = { earlySecondHalf = false }) { Text("Keep half time") }
+            },
+        )
+    }
+
+    val pendingCorrection = correction
+    if (pendingCorrection != null && s != null) {
+        // Say what the clock will read, so the fix can be checked before it's made.
+        val after = when (pendingCorrection) {
+            ClockCorrection.BACK_TO_FIRST_HALF -> {
+                val clock = LiveClock.derive(s.kickoffTime, null, null, null, s.halfDuration, Instant.ofEpochMilli(nowTick))
+                "The clock goes back to the 1st half and reads ${clock.display}, the time since kickoff."
+            }
+            ClockCorrection.BACK_TO_HALF_TIME -> {
+                val left = HalfTime.remainingSeconds(s.halftimeStart, Instant.ofEpochMilli(nowTick))
+                "The 2nd half is undone and the clock goes back to half time" +
+                    (left?.let { if (it < 0) " (break overdue by ${HalfTime.countdown(-it)})." else " (${HalfTime.countdown(it)} left)." } ?: ".")
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { correction = null },
+            title = { Text("${pendingCorrection.label}?") },
+            text = { Text("$after Goals, cards and subs logged since are re-timed to match.") },
+            confirmButton = {
+                Button(onClick = {
+                    correction = null
+                    act(pendingCorrection.label) { correct(pendingCorrection) }
+                }) { Text(pendingCorrection.label) }
+            },
+            dismissButton = { TextButton(onClick = { correction = null }) { Text("Cancel") } },
         )
     }
 
@@ -830,7 +921,8 @@ fun LiveScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmEnd = false
-                    act("Full time") {
+                    // Full time by mistake reopens in one tap (SB-1450).
+                    act("Full time", undo = { repo.enqueueReopen(matchId) }) {
                         repo.enqueueClock(matchId, ClockRequest("end_match", occurredAt = Instant.now().toString()))
                     }
                 }) { Text("End match") }
@@ -1036,7 +1128,12 @@ fun LiveScreen(
  * likely restarted — with "now" as the alternative.
  */
 @Composable
-private fun SecondHalfDialog(expectedStart: Instant?, onStart: (Instant) -> Unit, onDismiss: () -> Unit) {
+private fun SecondHalfDialog(
+    expectedStart: Instant?,
+    earlyBreakSeconds: Long?,
+    onStart: (Instant) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val now = Instant.now()
     // Within a minute of now there's nothing worth backdating.
     val backdate = expectedStart?.takeIf { Duration.between(it, now).toMinutes() >= 1 }
@@ -1054,6 +1151,16 @@ private fun SecondHalfDialog(expectedStart: Instant?, onStart: (Instant) -> Unit
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                // Moments into the break, the likelier story is a half time
+                // tapped by mistake (SB-1450): point at the way back.
+                if (earlyBreakSeconds != null) {
+                    Text(
+                        "Half time only began ${HalfTime.countdown(earlyBreakSeconds)} ago. If the 1st half is " +
+                            "still going, cancel and use ⋮ → Back to 1st half.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 if (backdate != null) {
                     Button(onClick = { onStart(backdate) }, modifier = Modifier.fillMaxWidth()) {
                         Text("At ${chatTime(backdate.toString())} (end of break)")

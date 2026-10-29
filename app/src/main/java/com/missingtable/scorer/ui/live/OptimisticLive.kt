@@ -105,7 +105,9 @@ object OptimisticLive {
                             matchStatus = "live",
                         )
                         "start_halftime" -> s.copy(halftimeStart = req.occurredAt)
-                        "cancel_halftime" -> s.copy(halftimeStart = null)
+                        // Back to the 1st half undoes a second half too (SB-1449).
+                        "cancel_halftime" -> s.copy(halftimeStart = null, secondHalfStart = null)
+                        "cancel_second_half" -> s.copy(secondHalfStart = null)
                         "start_second_half" -> s.copy(secondHalfStart = req.occurredAt)
                         "end_match" -> s.copy(matchEndTime = req.occurredAt)
                         else -> s

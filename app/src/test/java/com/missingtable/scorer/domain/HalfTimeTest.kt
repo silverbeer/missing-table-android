@@ -62,6 +62,19 @@ class HalfTimeTest {
     }
 
     @Test
+    fun `second half 34 seconds into the break is early`() {
+        assertEquals(34L, HalfTime.earlySecondHalfSeconds(ht, at(34)))
+        assertEquals(179L, HalfTime.earlySecondHalfSeconds(ht, at(179)))
+    }
+
+    @Test
+    fun `second half after the early window is not early`() {
+        assertNull(HalfTime.earlySecondHalfSeconds(ht, at(180)))
+        assertNull(HalfTime.earlySecondHalfSeconds(ht, at(900)))
+        assertNull(HalfTime.earlySecondHalfSeconds(null, at(10)))
+    }
+
+    @Test
     fun `late start is backdated to the end of the break`() {
         assertEquals(at(600), HalfTime.expectedSecondHalfStart(ht, at(900)))
     }

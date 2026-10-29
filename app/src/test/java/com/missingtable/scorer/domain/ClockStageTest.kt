@@ -104,4 +104,33 @@ class ClockStageTest {
         }
         assertEquals(walk.size, walk.map { it.first }.distinct().size)
     }
+
+    @Test
+    fun `half time can go back to the 1st half only`() {
+        assertEquals(listOf(ClockCorrection.BACK_TO_FIRST_HALF), MatchClock.corrections(ClockStage.HALFTIME))
+    }
+
+    @Test
+    fun `second half can go back to half time or the 1st half`() {
+        assertEquals(
+            listOf(ClockCorrection.BACK_TO_HALF_TIME, ClockCorrection.BACK_TO_FIRST_HALF),
+            MatchClock.corrections(ClockStage.SECOND_HALF),
+        )
+    }
+
+    @Test
+    fun `nothing to correct before kickoff, in the 1st half or at full time`() {
+        listOf(ClockStage.NOT_STARTED, ClockStage.FIRST_HALF, ClockStage.ENDED).forEach {
+            assertTrue("$it", MatchClock.corrections(it).isEmpty())
+        }
+    }
+
+    @Test
+    fun `halftime and second half each have an undo`() {
+        assertEquals(ClockCorrection.BACK_TO_FIRST_HALF, MatchClock.undoOf("start_halftime"))
+        assertEquals(ClockCorrection.BACK_TO_HALF_TIME, MatchClock.undoOf("start_second_half"))
+        assertNull(MatchClock.undoOf("end_match"))
+        assertEquals("cancel_halftime", ClockCorrection.BACK_TO_FIRST_HALF.action)
+        assertEquals("cancel_second_half", ClockCorrection.BACK_TO_HALF_TIME.action)
+    }
 }
