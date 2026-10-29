@@ -150,6 +150,9 @@ fun LiveScreen(
     var confirmEnd by remember { mutableStateOf(false) }
     var startDialog by remember { mutableStateOf(false) }
     var halfLengthDialog by remember { mutableStateOf(false) }
+    // HALFTIME tapped well short of the half length (SB-1448): the tap time,
+    // so a confirmed halftime is stamped when it was tapped, not confirmed.
+    var earlyHalftimeAt by remember { mutableStateOf<Instant?>(null) }
     // Second-half start prompt (SB-1350). Holds what to do once the half has
     // started — the goal/sub/card flow that was blocked — or a no-op when the
     // overdue START 2ND HALF button opened it.
@@ -590,6 +593,10 @@ fun LiveScreen(
                                 // Starting needs the half-length dialog (SB-645).
                                 stage == ClockStage.NOT_STARTED -> startDialog = true
                                 stage == ClockStage.SECOND_HALF -> confirmEnd = true
+                                // A stray tap 14' in sent #10106 to half time (SB-1448).
+                                stage == ClockStage.FIRST_HALF &&
+                                    HalfTime.earlyHalftimeMinute(s.kickoffTime, s.halfDuration) != null ->
+                                    earlyHalftimeAt = Instant.now()
                                 else -> MatchClock.primaryAction(stage)?.let { action ->
                                     act(stage.label) {
                                         repo.enqueueClock(
@@ -788,6 +795,30 @@ fun LiveScreen(
                 startSecondHalf(at, gate)
             },
             onDismiss = { secondHalfGate = null },
+        )
+    }
+
+    val earlyAt = earlyHalftimeAt
+    if (earlyAt != null && s != null) {
+        val played = HalfTime.earlyHalftimeMinute(s.kickoffTime, s.halfDuration, earlyAt) ?: 0
+        AlertDialog(
+            onDismissRequest = { earlyHalftimeAt = null },
+            title = { Text("Go to half time?") },
+            text = {
+                Text("Only $played' played of a ${s.halfDuration}' half. Are you sure you want to go to half time?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    earlyHalftimeAt = null
+                    act(ClockStage.FIRST_HALF.label) {
+                        repo.enqueueClock(matchId, ClockRequest("start_halftime", occurredAt = earlyAt.toString()))
+                    }
+                }) { Text("Half time") }
+            },
+            dismissButton = {
+                // The safe choice gets the emphasis: a stray tap is the likely case.
+                Button(onClick = { earlyHalftimeAt = null }) { Text("Keep playing") }
+            },
         )
     }
 

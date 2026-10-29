@@ -30,6 +30,26 @@ object HalfTime {
         return Duration.between(now, start.plus(Duration.ofMinutes(BREAK_MINUTES))).seconds
     }
 
+    /**
+     * How close to the end of the half a HALFTIME tap goes straight through.
+     * Referees end a half a minute or two either side of time; anything
+     * earlier than this is far more likely a stray tap (SB-1448).
+     */
+    const val EARLY_HALFTIME_MARGIN_MINUTES = 5L
+
+    /**
+     * Whole minutes played in the first half when HALFTIME is tapped this
+     * early, or null when the tap is close enough to the half length to need
+     * no warning. Match #10106 went to half time 14' into a 45' half, then to
+     * the second half 34s later, and the clock ran 30 minutes fast after.
+     */
+    fun earlyHalftimeMinute(kickoffTime: String?, halfDuration: Int, now: Instant = Instant.now()): Long? {
+        val kickoff = parse(kickoffTime) ?: return null
+        val played = Duration.between(kickoff, now)
+        val threshold = Duration.ofMinutes(halfDuration - EARLY_HALFTIME_MARGIN_MINUTES)
+        return if (played < threshold) played.toMinutes().coerceAtLeast(0) else null
+    }
+
     /** "7:42", or "+2:15" once overdue. */
     fun countdown(remaining: Long): String {
         val s = kotlin.math.abs(remaining)
