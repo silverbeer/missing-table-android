@@ -242,8 +242,8 @@ private fun ForceUpdateScreen(onDownload: () -> Unit) {
         )
         androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
         Text(
-            "This version of MT Scorer (${BuildConfig.VERSION_NAME}) is no longer " +
-                "supported. Download the latest version to keep scoring.",
+            "This version of Missing Table (${BuildConfig.VERSION_NAME}) is no longer " +
+                "supported. Download the latest version to keep using it.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
