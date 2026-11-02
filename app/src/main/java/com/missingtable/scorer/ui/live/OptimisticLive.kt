@@ -10,6 +10,7 @@ import com.missingtable.scorer.data.api.PositionChangeRequest
 import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.domain.OnPitch
 import kotlinx.serialization.json.Json
 
 /**
@@ -188,3 +189,21 @@ object OptimisticLive {
             ?: playerId?.let { id -> rosters[teamId]?.firstOrNull { it.id == id }?.label }
             ?: "?"
 }
+
+/**
+ * [teamId]'s substitutions and position changes, oldest first — what turns
+ * the starting XI into who is on the pitch now. The full pitch list when the
+ * backend sends it; the capped recent list (newest first, chat included) only
+ * as a fallback (SB-1370). Shared by the live screen and the lineup screen's
+ * Now tab (SB-1504).
+ */
+fun pitchChanges(state: LiveMatchState, teamId: Int): List<OnPitch.Change> =
+    (state.pitchEvents ?: state.recentEvents.reversed())
+        .filter { it.teamId == teamId }
+        .mapNotNull {
+            when (it.eventType) {
+                "substitution" -> OnPitch.Sub(outId = it.playerOutId, inId = it.playerId)
+                "position_change" -> OnPitch.Move(playerId = it.playerId, position = it.position)
+                else -> null
+            }
+        }

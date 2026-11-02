@@ -89,16 +89,13 @@ fun SubModeScreen(
     var teamId by remember { mutableStateOf(initialTeamId) }
     // Staged changes per team, in the order they were made.
     var stagedByTeam by remember { mutableStateOf<Map<Int, List<OnPitch.Change>>>(emptyMap()) }
-    var pickSlot by remember { mutableStateOf<String?>(null) }
 
     val team = teams.firstOrNull { it.id == teamId } ?: teams.first()
-    val staged = stagedByTeam[team.id].orEmpty()
     // What DONE will post, per team: swapping and swapping back nets to nothing.
     val netByTeam = teams.associate { t ->
         t.id to (t.pitch?.let { OnPitch.net(it, stagedByTeam[t.id].orEmpty()) } ?: emptyList())
     }.filterValues { it.isNotEmpty() }
     val pending = netByTeam.values.sumOf { it.size }
-    val byId = team.roster.associateBy { it.id }
 
     Dialog(
         onDismissRequest = onClose,
@@ -147,80 +144,105 @@ fun SubModeScreen(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-
-                val pitch = team.pitch
-                if (pitch == null) {
-                    NoLineup(team.name, onSetLineup)
-                    return@Column
-                }
-                val shown = OnPitch.current(pitch, staged)
-                val marks = Marks.of(pitch, staged, shown)
-
-                Text(
-                    "Tap a player to sub them off or move them to another position.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                SubPanel(
+                    team = team,
+                    staged = stagedByTeam[team.id].orEmpty(),
+                    onStagedChange = { stagedByTeam = stagedByTeam + (team.id to it) },
+                    onSetLineup = onSetLineup,
                 )
-                Spacer(Modifier.height(6.dp))
-
-                val slots = Formations.presets[team.formation]
-                if (slots != null && shown.keys.all { code -> slots.any { it.code == code } }) {
-                    PitchSlots(slots, shown, marks, byId, onTap = { pickSlot = it })
-                } else {
-                    // A formation this app doesn't draw (saved on the web):
-                    // same data, as a list.
-                    SlotList(shown, marks, byId, onTap = { pickSlot = it })
-                }
-
-                val net = netByTeam[team.id].orEmpty()
-                if (net.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    net.forEach { change ->
-                        Text(
-                            when (change) {
-                                is OnPitch.Sub -> "${byId[change.inId].tag()} ON for ${byId[change.outId].tag()}"
-                                is OnPitch.Move -> "${byId[change.playerId].tag()} → ${change.position}"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+}
 
-        val slot = pickSlot
+/**
+ * One team's pitch for staging subs and position swaps — the body of sub
+ * mode, also the lineup screen's Now tab (SB-1504). Holds no state of its
+ * own: the caller owns [staged] and decides when to post [OnPitch.net].
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SubPanel(
+    team: SubTeam,
+    staged: List<OnPitch.Change>,
+    onStagedChange: (List<OnPitch.Change>) -> Unit,
+    onSetLineup: () -> Unit,
+) {
+    var pickSlot by remember(team.id) { mutableStateOf<String?>(null) }
+    val byId = team.roster.associateBy { it.id }
+
+    Column(Modifier.fillMaxWidth()) {
         val pitch = team.pitch
-        val here = pitch?.let { OnPitch.current(it, staged)[slot] }
-        if (slot != null && pitch != null && here != null) {
-            val shown = OnPitch.current(pitch, staged)
-            val stagedSub = OnPitch.stagedSubFor(staged, here)
-            fun set(next: List<OnPitch.Change>) {
-                stagedByTeam = stagedByTeam + (team.id to next)
-                pickSlot = null
+        if (pitch == null) {
+            NoLineup(team.name, onSetLineup)
+            return@Column
+        }
+        val shown = OnPitch.current(pitch, staged)
+        val marks = Marks.of(pitch, staged, shown)
+
+        Text(
+            "Tap a player to sub them off or move them to another position.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+
+        val slots = Formations.presets[team.formation]
+        if (slots != null && shown.keys.all { code -> slots.any { it.code == code } }) {
+            PitchSlots(slots, shown, marks, byId, onTap = { pickSlot = it })
+        } else {
+            // A formation this app doesn't draw (saved on the web):
+            // same data, as a list.
+            SlotList(shown, marks, byId, onTap = { pickSlot = it })
+        }
+
+        val net = OnPitch.net(pitch, staged)
+        if (net.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            net.forEach { change ->
+                Text(
+                    when (change) {
+                        is OnPitch.Sub -> "${byId[change.inId].tag()} ON for ${byId[change.outId].tag()}"
+                        is OnPitch.Move -> "${byId[change.playerId].tag()} → ${change.position}"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
-            ModalBottomSheet(onDismissRequest = { pickSlot = null }) {
-                Column {
-                    PlayerPickSheet(
-                        title = "ON for ${byId[stagedSub?.outId ?: here].tag()} ($slot)",
-                        players = team.roster.filter { it.id !in shown.values },
-                        extraOption = stagedSub?.let { "UNDO — keep ${byId[it.outId].tag()}" },
-                        onExtra = { set(OnPitch.unstageSub(staged, pitch, slot)) },
-                        onPick = { inn, _ ->
-                            if (inn != null) {
-                                set(OnPitch.stageSub(staged, pitch, slot, inn.id))
-                            } else {
-                                pickSlot = null
-                            }
-                        },
-                    )
-                    SwapWith(
-                        player = byId[here].tag(),
-                        others = shown.filterKeys { it != slot },
-                        byId = byId,
-                        onPick = { other -> set(OnPitch.stageSwap(staged, pitch, slot, other)) },
-                    )
-                }
+        }
+    }
+
+    val slot = pickSlot
+    val pitch = team.pitch
+    val here = pitch?.let { OnPitch.current(it, staged)[slot] }
+    if (slot != null && pitch != null && here != null) {
+        val shown = OnPitch.current(pitch, staged)
+        val stagedSub = OnPitch.stagedSubFor(staged, here)
+        fun set(next: List<OnPitch.Change>) {
+            onStagedChange(next)
+            pickSlot = null
+        }
+        ModalBottomSheet(onDismissRequest = { pickSlot = null }) {
+            Column {
+                PlayerPickSheet(
+                    title = "ON for ${byId[stagedSub?.outId ?: here].tag()} ($slot)",
+                    players = team.roster.filter { it.id !in shown.values },
+                    extraOption = stagedSub?.let { "UNDO — keep ${byId[it.outId].tag()}" },
+                    onExtra = { set(OnPitch.unstageSub(staged, pitch, slot)) },
+                    onPick = { inn, _ ->
+                        if (inn != null) {
+                            set(OnPitch.stageSub(staged, pitch, slot, inn.id))
+                        } else {
+                            pickSlot = null
+                        }
+                    },
+                )
+                SwapWith(
+                    player = byId[here].tag(),
+                    others = shown.filterKeys { it != slot },
+                    byId = byId,
+                    onPick = { other -> set(OnPitch.stageSwap(staged, pitch, slot, other)) },
+                )
             }
         }
     }

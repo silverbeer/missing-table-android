@@ -222,6 +222,9 @@ data class BulkRosterPlayer(@SerialName("jersey_number") val jerseyNumber: Int)
 data class BulkRosterRequest(
     @SerialName("season_id") val seasonId: Int,
     val players: List<BulkRosterPlayer>,
+    // Jersey numbers are unique per (team, season, age group): without it the
+    // backend's duplicate check looks at the wrong squad (SB-1504).
+    @SerialName("age_group_id") val ageGroupId: Int? = null,
 )
 
 @Serializable
