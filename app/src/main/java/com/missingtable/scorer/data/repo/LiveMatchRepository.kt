@@ -70,10 +70,31 @@ class LiveMatchRepository(
         matchId, PendingAction.ActionType.REOPEN, "{}", UUID.randomUUID().toString()
     )
 
-    suspend fun enqueueLineupSave(matchId: Int, teamId: Int, req: LineupSaveRequest) = enqueue(
-        matchId, PendingAction.ActionType.LINEUP_SAVE, json.encodeToString(req),
-        UUID.randomUUID().toString(), teamId = teamId,
-    )
+    /**
+     * Queue a whole-lineup save, replacing the not-yet-sent save for the same
+     * team in place (SB-1504). Autosave calls this on every edit; without the
+     * replace, a lineup built tap by tap would queue a dozen overwrites. A
+     * FAILED save is replaced too, so a fresh edit unblocks a queue a bad save
+     * paused.
+     */
+    suspend fun enqueueLineupSave(matchId: Int, teamId: Int, req: LineupSaveRequest) {
+        val payload = json.encodeToString(req)
+        if (dao.updateQueuedLineupSave(matchId, teamId, payload) > 0) {
+            engine.kick()
+            SyncWorker.schedule(appContext)
+            return
+        }
+        enqueue(
+            matchId, PendingAction.ActionType.LINEUP_SAVE, payload,
+            UUID.randomUUID().toString(), teamId = teamId,
+        )
+    }
+
+    /** The lineup most recently queued for [teamId], or null when none is waiting. */
+    suspend fun pendingLineup(matchId: Int, teamId: Int): LineupSaveRequest? =
+        dao.latestLineupSave(matchId, teamId)?.let {
+            runCatching { json.decodeFromString<LineupSaveRequest>(it.payloadJson) }.getOrNull()
+        }
 
     /**
      * Delete a not-yet-synced action locally — never touches the API.

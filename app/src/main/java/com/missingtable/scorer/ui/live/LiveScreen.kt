@@ -74,6 +74,7 @@ import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
 import com.missingtable.scorer.data.api.LineupResponse
+import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.LiveMatchState
 import com.missingtable.scorer.data.api.MatchEvent
 import com.missingtable.scorer.data.api.MessageRequest
@@ -209,37 +210,45 @@ fun LiveScreen(
         val s = state ?: return@LaunchedEffect
         if (readOnly || seasonId == null || rosters.isNotEmpty()) return@LaunchedEffect
         val loaded = mutableMapOf<Int, List<RosterPlayer>>()
-        val saved = mutableMapOf<Int, LineupResponse>()
         listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
             runCatching { container.api.roster(teamId, seasonId, null) }
                 .onSuccess { loaded[teamId] = it.roster }
-            runCatching { container.api.getLineup(matchId, teamId) }
-                .onSuccess { lineup ->
-                    if (lineup.positions.isNotEmpty()) saved[teamId] = lineup
-                }
         }
         rosters = loaded
+    }
+
+    // Saved lineups, refetched whenever a queued lineup save leaves the queue
+    // (SB-1504). Loading them once at open raced START MATCH: the save was
+    // still queued, the server had nothing, and sub mode said "no lineup"
+    // for the rest of the match.
+    val queuedLineups = pending.filter { it.actionType == PendingAction.ActionType.LINEUP_SAVE }
+    LaunchedEffect(state?.homeTeamId, state?.awayTeamId, queuedLineups.size) {
+        val s = state ?: return@LaunchedEffect
+        if (readOnly) return@LaunchedEffect
+        val saved = lineups.toMutableMap()
+        listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
+            runCatching { container.api.getLineup(matchId, teamId) }
+                .onSuccess { lineup ->
+                    if (lineup.positions.isNotEmpty()) saved[teamId] = lineup else saved.remove(teamId)
+                }
+        }
         lineups = saved
     }
+
+    // The starting XI per team: a queued save (newest wins) over the server's.
+    fun startingXi(teamId: Int): LineupResponse? =
+        queuedLineups.lastOrNull { it.teamId == teamId }
+            ?.let { runCatching { container.json.decodeFromString<LineupSaveRequest>(it.payloadJson) }.getOrNull() }
+            ?.let { LineupResponse(matchId = matchId, teamId = teamId, formationName = it.formationName, positions = it.positions) }
+            ?.takeIf { it.positions.isNotEmpty() }
+            ?: lineups[teamId]
 
     // Who is on the pitch now, by position: the starting lineup with
     // substitution and position-change events (SB-1352) applied oldest-first.
     // Null when no lineup was saved.
     fun currentPitch(teamId: Int): Map<String, Int>? {
-        val lineup = lineups[teamId] ?: return null
-        // The full pitch list when the backend sends it; the capped recent
-        // list (newest first, chat included) only as a fallback (SB-1370).
-        val history = state?.let { it.pitchEvents ?: it.recentEvents.reversed() }
-        val changes = history
-            ?.filter { it.teamId == teamId }
-            ?.mapNotNull {
-                when (it.eventType) {
-                    "substitution" -> OnPitch.Sub(outId = it.playerOutId, inId = it.playerId)
-                    "position_change" -> OnPitch.Move(playerId = it.playerId, position = it.position)
-                    else -> null
-                }
-            }
-            .orEmpty()
+        val lineup = startingXi(teamId) ?: return null
+        val changes = state?.let { pitchChanges(it, teamId) }.orEmpty()
         return OnPitch.current(lineup.positions.associate { it.position to it.playerId }, changes)
     }
 
@@ -444,13 +453,10 @@ fun LiveScreen(
                         })
                         DropdownMenuItem(text = { Text("Lineup…") }, onClick = {
                             menuOpen = false
-                            // After kickoff the saved lineup is the starting XI
-                            // and must not be overwritten: changes from here on
-                            // are subs (SB-1228).
-                            val started = s != null && MatchClock.stage(
-                                s.kickoffTime, s.halftimeStart, s.secondHalfStart, s.matchEndTime
-                            ) != ClockStage.NOT_STARTED
-                            if (started) gated { openSubs(it) } else s?.let(onOpenLineup)
+                            // Any time, half time included (SB-1504): the lineup
+                            // screen edits the starting XI (it may be unfinished
+                            // or wrong) and records subs on its Now tab.
+                            s?.let(onOpenLineup)
                         })
                         // Only the corrections valid right now (SB-1450): from
                         // the 2nd half, both half time and the 1st half.
@@ -677,7 +683,10 @@ fun LiveScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { gated { openSubs(it) } },
+                        // Subs are not gated on the second half (SB-1504):
+                        // half time is when most changes are made. At HT the
+                        // clock stamps the end of the first half.
+                        onClick = { openSubs() },
                         modifier = Modifier
                             .weight(1f)
                             .height(52.dp),
@@ -1056,7 +1065,7 @@ fun LiveScreen(
             SubTeam(
                 id = id,
                 name = name,
-                formation = lineups[id]?.formationName.orEmpty(),
+                formation = startingXi(id)?.formationName.orEmpty(),
                 pitch = currentPitch(id),
                 roster = rosters[id].orEmpty(),
             )

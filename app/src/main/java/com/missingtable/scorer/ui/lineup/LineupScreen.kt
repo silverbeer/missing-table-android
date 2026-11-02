@@ -77,6 +77,25 @@ import com.missingtable.scorer.domain.JerseyList
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.domain.Positions
 import com.missingtable.scorer.ui.common.PitchCanvas
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableLongStateOf
+import com.missingtable.scorer.data.api.LiveMatchState
+import com.missingtable.scorer.data.api.PositionChangeRequest
+import com.missingtable.scorer.data.api.SubstitutionRequest
+import com.missingtable.scorer.domain.EventStamp
+import com.missingtable.scorer.domain.LineupSlots
+import com.missingtable.scorer.domain.LiveClock
+import com.missingtable.scorer.domain.OnPitch
+import com.missingtable.scorer.ui.live.OptimisticLive
+import com.missingtable.scorer.ui.live.SubPanel
+import com.missingtable.scorer.ui.live.SubTeam
+import com.missingtable.scorer.ui.live.pitchChanges
+import java.util.UUID
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -104,6 +123,19 @@ private fun rememberAutoFocus(): FocusRequester {
     return requester
 }
 
+/** Starting XI edits the kickoff lineup; Now records subs on top of it (SB-1504). */
+private enum class LineupTab { STARTING, NOW }
+
+/** Autosave status line (SB-1504): no Save button, so say where things stand. */
+private enum class SaveState { SAVED, SAVING, UNSAVED }
+
+private const val NUMBERS_NEED_SIGNAL = "New shirt numbers need signal to save"
+private const val LOAD_FAILED = "Couldn't load the saved lineup"
+
+/** Rethrow cancellation: runCatching would swallow it and carry on half-done. */
+private fun <T> Result<T>.rethrowCancel(): Result<T> =
+    onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LineupScreen(
@@ -116,6 +148,9 @@ fun LineupScreen(
     seasonId: Int?,
     // Drives the half-length default when starting from here (SB-676).
     ageGroupName: String? = null,
+    // Each side's age group, for creating roster rows from typed shirt
+    // numbers — a side playing up fields its own squad (SB-1504).
+    ageGroupIds: Map<Int, Int?> = emptyMap(),
     // True once the match is under way — starting again is not on offer,
     // returning to it is (SB-677).
     alreadyStarted: Boolean = false,
@@ -137,7 +172,31 @@ fun LineupScreen(
     var bulkOpen by remember { mutableStateOf(false) }
     var bulkText by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
+    // Edited since the last queued save. Every edit sets it; autosave clears it.
     var dirty by remember { mutableStateOf(false) }
+    var saveState by remember { mutableStateOf(SaveState.SAVED) }
+    var saveProblem by remember { mutableStateOf<String?>(null) }
+    // Where to go once the user accepts leaving with an unsaved lineup.
+    var leaveAnyway by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val saveLock = remember { Mutex() }
+    // Now tab: changes staged per team, not yet recorded.
+    var stagedByTeam by remember { mutableStateOf<Map<Int, List<OnPitch.Change>>>(emptyMap()) }
+    fun stagedByTeamNonEmpty() = stagedByTeam.values.any { it.isNotEmpty() }
+    // After kickoff the screen opens on Now when there's a lineup to sub
+    // against; set on the first load, then the user's choice.
+    var tab by remember { mutableStateOf(LineupTab.STARTING) }
+    var tabChosen by remember { mutableStateOf(false) }
+    // The server's lineup couldn't be read. Autosave is a whole-lineup
+    // overwrite, so saving now could replace a real XI with the two players
+    // just tapped: hold saves until it loads or the user says start fresh.
+    var loadFailed by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableStateOf(0) }
+    // One leave at a time: a second back press must not pop twice.
+    var leaving by remember { mutableStateOf(false) }
+    // A formation chip tapped over a lineup already set: confirm first.
+    var confirmFormation by remember { mutableStateOf<String?>(null) }
+    // Leaving the Now tab with subs staged but not recorded.
+    var discardStaged by remember { mutableStateOf<(() -> Unit)?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -151,28 +210,38 @@ fun LineupScreen(
         return selectedSlot
     }
 
-    LaunchedEffect(matchId, teamId) {
+    LaunchedEffect(matchId, teamId, reloadKey) {
         loading = true
         assignments = emptyMap()
+        // Never show (or pick from) the other team's players.
+        roster = emptyList()
+        dirty = false
+        loadFailed = false
+        saveState = SaveState.SAVED
+        saveProblem = null
         if (seasonId != null) {
             runCatching { container.api.roster(teamId, seasonId, null) }
                 .onSuccess { roster = it.roster }
                 .onFailure { snackbar.showSnackbar("Couldn't load roster") }
         }
-        // Existing lineup (edit flow)
-        runCatching { container.api.getLineup(matchId, teamId) }
-            .onSuccess { lineup ->
-                if (lineup.positions.isNotEmpty()) {
-                    val preset = Formations.presets[lineup.formationName]
-                    if (preset != null) {
-                        formation = lineup.formationName
-                        val byPosition = lineup.positions.associateBy { it.position }
-                        assignments = preset.withIndex().mapNotNull { (idx, slot) ->
-                            byPosition[slot.code]?.let { idx to it.playerId }
-                        }.toMap()
-                    }
-                }
-            }
+        // A save still in the queue is what the user last entered; the
+        // server's copy is older until it syncs (SB-1504). Reading the server
+        // first is what made a just-saved lineup look lost.
+        val queued = runCatching { container.liveRepo.pendingLineup(matchId, teamId) }.getOrNull()
+            ?.let { q -> LineupSlots.load(q.formationName, q.positions.map { it.position to it.playerId }) }
+        val loaded = queued ?: runCatching { container.api.getLineup(matchId, teamId) }
+            .onFailure { loadFailed = true }
+            .getOrNull()
+            ?.takeIf { it.positions.isNotEmpty() }
+            ?.let { l -> LineupSlots.load(l.formationName, l.positions.map { it.position to it.playerId }) }
+        if (loaded != null) {
+            formation = loaded.formation
+            assignments = loaded.assignments
+        }
+        if (!tabChosen) {
+            tab = if (alreadyStarted && assignments.isNotEmpty()) LineupTab.NOW else LineupTab.STARTING
+            tabChosen = true
+        }
         selectedSlot = nextOpenSlot()
         loading = false
     }
@@ -187,42 +256,210 @@ fun LineupScreen(
         val ok = runCatching {
             container.api.bulkCreateRoster(
                 teamId,
-                BulkRosterRequest(seasonId, pendingNumbers.map { BulkRosterPlayer(it) }),
+                BulkRosterRequest(seasonId, pendingNumbers.map { BulkRosterPlayer(it) }, ageGroupIds[teamId]),
             )
             // Refetch: bulk skips numbers that already exist, so the roster is
             // the one source of truth for number -> id
             val fresh = container.api.roster(teamId, seasonId, null).roster
             roster = fresh
             val byNumber = fresh.associateBy { it.jerseyNumber }
+            // Read assignments only now: edits made while the network calls
+            // were out must survive.
             assignments = assignments.mapValues { (_, id) ->
                 if (id < 0) byNumber[-id]?.id ?: id else id
             }
             assignments.values.none { it < 0 }
-        }.getOrDefault(false)
+        }.rethrowCancel().getOrDefault(false)
         return ok
     }
 
-    fun save(showConfirmation: Boolean = true, then: (() -> Unit)? = null) {
+    /**
+     * Queue the lineup as it stands (SB-1504). Called by autosave after every
+     * edit and before leaving the screen or switching team. Queued, not
+     * direct, so it works offline; each save replaces the previous unsent one.
+     *
+     * Shirt numbers with no roster row need the network to become players.
+     * Without it the rest of the lineup still saves, the numbers stay on
+     * screen, and the save retries — returns false so leaving can warn.
+     */
+    suspend fun saveNow(): Boolean = saveLock.withLock {
+        if (!dirty) return@withLock true
+        if (loadFailed) {
+            saveState = SaveState.UNSAVED
+            saveProblem = LOAD_FAILED
+            return@withLock false
+        }
+        saveState = SaveState.SAVING
+        val numbersOk = materializePlaceholders()
+        val savedFormation = formation
+        val savedAssignments = assignments
+        val positions = LineupSlots.positions(savedFormation, savedAssignments.filterValues { it > 0 })
+            .map { (code, id) -> LineupPosition(playerId = id, position = code) }
+        val queued = runCatching {
+            container.liveRepo.enqueueLineupSave(matchId, teamId, LineupSaveRequest(savedFormation, positions))
+        }.rethrowCancel().isSuccess
+        val done = queued && numbersOk
+        // Edits made while saving keep the lineup dirty for the next pass.
+        if (done && formation == savedFormation && assignments == savedAssignments) dirty = false
+        saveState = if (done) SaveState.SAVED else SaveState.UNSAVED
+        saveProblem = when {
+            !queued -> "Couldn't save lineup"
+            !numbersOk -> NUMBERS_NEED_SIGNAL
+            else -> null
+        }
+        done
+    }
+
+    // Autosave: a short pause after the last edit, so a run of taps queues one
+    // save. Launched on the screen scope — an edit restarting this effect must
+    // not cancel a save already under way.
+    LaunchedEffect(dirty, formation, assignments, loading) {
+        if (!dirty || loading) return@LaunchedEffect
+        delay(700)
+        scope.launch { saveNow() }
+    }
+    // Typed numbers waiting on signal: keep trying while the screen is open.
+    // On the screen scope for the same reason: saving changes saveState,
+    // which restarts this effect.
+    LaunchedEffect(saveState, loadFailed) {
+        while (saveState == SaveState.UNSAVED && !loadFailed) {
+            delay(10_000)
+            if (dirty) scope.launch { saveNow() }
+        }
+    }
+
+    /**
+     * Save first, then [then]; if it can't all be saved, ask before going.
+     * Subs staged on Now but not recorded are asked about first too.
+     */
+    fun leave(checkStaged: Boolean = true, then: () -> Unit) {
+        if (leaving) return
+        val proceed = {
+            leaving = true
+            scope.launch {
+                if (saveNow()) {
+                    then()
+                } else {
+                    leaveAnyway = then
+                }
+                leaving = false
+            }
+            Unit
+        }
+        if (checkStaged && stagedByTeamNonEmpty()) discardStaged = proceed else proceed()
+    }
+
+    BackHandler { leave(then = onBack) }
+
+    // --- Now tab (SB-1504): live state, so subs replay onto the XI above. ---
+    var live by remember { mutableStateOf<LiveMatchState?>(null) }
+    val pending by container.liveRepo.pendingForMatch(matchId).collectAsState(initial = emptyList())
+    // Minute stamped per team when the first change of a batch is staged —
+    // the moment the sub happened, not when RECORD was tapped (SB-652).
+    var nowStamps by remember { mutableStateOf<Map<Int, EventStamp>>(emptyMap()) }
+    var recording by remember { mutableStateOf(false) }
+    var liveFailed by remember { mutableStateOf(false) }
+    // Responses can land out of order (poll vs post-sync refresh); keep the
+    // newest request's answer only, or a sub can flicker off the pitch.
+    val liveSeq = remember { intArrayOf(0, 0) } // [issued, applied]
+    var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    suspend fun refreshLive() {
+        val seq = ++liveSeq[0]
+        runCatching { container.api.liveState(matchId) }
+            .rethrowCancel()
+            .onSuccess {
+                if (seq > liveSeq[1]) {
+                    liveSeq[1] = seq
+                    live = it
+                    liveFailed = false
+                }
+            }
+            .onFailure { if (live == null) liveFailed = true }
+    }
+    LaunchedEffect(matchId, alreadyStarted) {
+        if (!alreadyStarted) return@LaunchedEffect
+        while (true) {
+            refreshLive()
+            delay(15_000)
+        }
+    }
+    // Queued subs reaching the server: pull fresh truth.
+    LaunchedEffect(pending.size) { if (live != null) refreshLive() }
+    // The Now tab's minute; before kickoff there is no clock to show.
+    LaunchedEffect(alreadyStarted) {
+        while (alreadyStarted) {
+            delay(1_000)
+            nowTick = System.currentTimeMillis()
+        }
+    }
+    val merged = live?.let {
+        OptimisticLive.merge(it, pending, container.json, mapOf(teamId to roster))
+    }
+    // Tabs once the match has kicked off. While live state is still loading
+    // they show (Now waits for it); a Lineup… opened before kickoff gets none.
+    val showTabs = alreadyStarted && (live == null || merged?.kickoffTime != null)
+
+    fun clockNow(): EventStamp = merged?.let {
+        EventStamp.from(
+            LiveClock.derive(
+                it.kickoffTime, it.halftimeStart, it.secondHalfStart, it.matchEndTime, it.halfDuration,
+                java.time.Instant.ofEpochMilli(nowTick),
+            )
+        )
+    } ?: EventStamp.UNKNOWN
+
+    fun record(pitch: Map<String, Int>) {
+        if (recording) return
+        val net = OnPitch.net(pitch, stagedByTeam[teamId].orEmpty())
+        if (net.isEmpty()) return
+        val at = nowStamps[teamId]?.takeIf { it.minute != null } ?: clockNow()
+        val forTeam = teamId
+        recording = true
         scope.launch {
-            if (!materializePlaceholders()) {
-                snackbar.showSnackbar("Couldn't create roster entries for entered numbers")
-                return@launch
-            }
-            val positions = assignments.mapNotNull { (idx, playerId) ->
-                slots.getOrNull(idx)?.let { LineupPosition(playerId = playerId, position = it.code) }
-            }
-            // Queued, not direct — works offline (placeholder materialization
-            // above still needs network, but a roster-only lineup queues fine).
             runCatching {
-                container.liveRepo.enqueueLineupSave(
-                    matchId, teamId, LineupSaveRequest(formation, positions)
-                )
-            }.onSuccess {
-                dirty = false
-                if (showConfirmation) snackbar.showSnackbar("Lineup saved")
-                then?.invoke()
+                // Queue order is replay order: subs first, then the moves
+                // that put everyone where they ended up.
+                net.forEach { change ->
+                    when (change) {
+                        is OnPitch.Sub -> container.liveRepo.enqueueSubstitution(
+                            matchId,
+                            SubstitutionRequest(
+                                teamId = forTeam,
+                                playerInId = requireNotNull(change.inId),
+                                playerOutId = requireNotNull(change.outId),
+                                matchMinute = at.minute,
+                                extraTime = at.extraTime,
+                                clientEventId = UUID.randomUUID().toString(),
+                            ),
+                        )
+                        is OnPitch.Move -> container.liveRepo.enqueuePositionChange(
+                            matchId,
+                            PositionChangeRequest(
+                                teamId = forTeam,
+                                playerId = requireNotNull(change.playerId),
+                                position = requireNotNull(change.position),
+                                matchMinute = at.minute,
+                                extraTime = at.extraTime,
+                                clientEventId = UUID.randomUUID().toString(),
+                            ),
+                        )
+                    }
+                }
+            }.rethrowCancel().onSuccess {
+                stagedByTeam = stagedByTeam - forTeam
+                nowStamps = nowStamps - forTeam
+                recording = false
+                val subs = net.count { it is OnPitch.Sub }
+                val moves = net.size - subs
+                val label = listOfNotNull(
+                    subs.takeIf { it > 0 }?.let { if (it == 1) "1 sub" else "$it subs" },
+                    moves.takeIf { it > 0 }?.let { if (it == 1) "1 position change" else "$it position changes" },
+                ).joinToString(", ")
+                snackbar.showSnackbar("$label recorded" + (at.label()?.let { " $it" } ?: ""))
             }.onFailure {
-                snackbar.showSnackbar("Failed to save lineup")
+                recording = false
+                snackbar.showSnackbar("Failed to record subs")
             }
         }
     }
@@ -244,12 +481,10 @@ fun LineupScreen(
         for (m in candidates) {
             val lineup = runCatching { container.api.getLineup(m.id, teamId) }.getOrNull() ?: continue
             if (lineup.positions.isEmpty()) continue
-            val preset = Formations.presets[lineup.formationName] ?: continue
-            formation = lineup.formationName
-            val byPosition = lineup.positions.associateBy { it.position }
-            assignments = preset.withIndex().mapNotNull { (idx, slot) ->
-                byPosition[slot.code]?.let { idx to it.playerId }
-            }.toMap()
+            val loaded = LineupSlots.load(lineup.formationName, lineup.positions.map { it.position to it.playerId })
+                ?: continue
+            formation = loaded.formation
+            assignments = loaded.assignments
             dirty = true
             snackbar.showSnackbar("Copied lineup from ${m.matchDate}")
             return
@@ -289,7 +524,7 @@ fun LineupScreen(
             TopAppBar(
                 title = { Text("$teamName lineup") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { leave(then = onBack) }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -319,18 +554,152 @@ fun LineupScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = teamId == homeTeamId,
-                    onClick = { teamId = homeTeamId },
+                    onClick = { if (teamId != homeTeamId) leave(checkStaged = false) { teamId = homeTeamId } },
                     label = { Text(homeTeamName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.weight(1f),
                 )
                 FilterChip(
                     selected = teamId == awayTeamId,
-                    onClick = { teamId = awayTeamId },
+                    onClick = { if (teamId != awayTeamId) leave(checkStaged = false) { teamId = awayTeamId } },
                     label = { Text(awayTeamName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.weight(1f),
                 )
             }
             Spacer(Modifier.height(6.dp))
+
+            // After kickoff (SB-1504): the kickoff lineup stays editable — it
+            // may be unfinished or wrong — and Now is where subs are made.
+            if (showTabs) {
+                val minute = clockNow().label()
+                TabRow(selectedTabIndex = tab.ordinal) {
+                    Tab(
+                        selected = tab == LineupTab.STARTING,
+                        onClick = { tab = LineupTab.STARTING },
+                        text = { Text("Starting XI") },
+                    )
+                    Tab(
+                        selected = tab == LineupTab.NOW,
+                        onClick = { tab = LineupTab.NOW },
+                        text = { Text(listOfNotNull("Now", minute).joinToString(" · ")) },
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (loadFailed) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "$LOAD_FAILED. Changes won't save until it loads, so they can't overwrite it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { reloadKey++ }) { Text("RETRY") }
+                            TextButton(onClick = {
+                                loadFailed = false
+                                saveState = SaveState.SAVED
+                                saveProblem = null
+                            }) { Text("START FRESH") }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (showTabs && tab == LineupTab.NOW && merged == null) {
+                // No live state yet: the pitch would be the kickoff XI with
+                // no subs applied, and a sub made against it would be wrong.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (liveFailed) {
+                        Text(
+                            "Couldn't reach the match. Subs need the current pitch.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        TextButton(onClick = { scope.launch { refreshLive() } }) { Text("RETRY") }
+                    } else {
+                        CircularProgressIndicator()
+                    }
+                }
+                return@Column
+            }
+
+            if (showTabs && tab == LineupTab.NOW) {
+                val changes = merged?.let { pitchChanges(it, teamId) }.orEmpty()
+                val pitch = LineupSlots.currentPitch(formation, assignments, changes)
+                    .takeIf { it.isNotEmpty() }
+                val staged = stagedByTeam[teamId].orEmpty()
+                val net = pitch?.let { OnPitch.net(it, staged) }.orEmpty()
+                val open = slots.size - assignments.size
+                if (open > 0 && pitch != null) {
+                    Text(
+                        "$open starting ${if (open == 1) "slot is" else "slots are"} empty — fill them in Starting XI.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarnAmber,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                SubPanel(
+                    team = SubTeam(teamId, teamName, formation, pitch, roster),
+                    staged = staged,
+                    onStagedChange = { next ->
+                        if (staged.isEmpty() && next.isNotEmpty()) nowStamps = nowStamps + (teamId to clockNow())
+                        stagedByTeam = stagedByTeam + (teamId to next)
+                    },
+                    onSetLineup = { tab = LineupTab.STARTING },
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { stagedByTeam = stagedByTeam - teamId; nowStamps = nowStamps - teamId },
+                        enabled = staged.isNotEmpty(),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                    ) { Text("Clear") }
+                    Button(
+                        onClick = { pitch?.let { record(it) } },
+                        enabled = net.isNotEmpty() && !recording,
+                        modifier = Modifier
+                            .weight(2f)
+                            .height(52.dp),
+                    ) {
+                        val at = (nowStamps[teamId]?.takeIf { it.minute != null } ?: clockNow()).label()
+                        Text(
+                            if (net.isEmpty()) "RECORD"
+                            else "RECORD ${net.size}" + (at?.let { " at $it" } ?: ""),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { leave(then = onStartMatch) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                ) { Text("BACK TO MATCH") }
+                Spacer(Modifier.height(12.dp))
+                return@Column
+            }
+
+            if (showTabs) {
+                Text(
+                    "Changes here rewrite the kickoff lineup. For a sub, use Now.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
 
             // Formation chips
             Row(
@@ -344,10 +713,15 @@ fun LineupScreen(
                         selected = formation == name,
                         onClick = {
                             if (formation != name) {
-                                formation = name
-                                assignments = emptyMap()
-                                selectedSlot = 0
-                                dirty = true
+                                // Switching clears the pitch, and autosave would
+                                // persist that: ask when there's a lineup to lose.
+                                if (assignments.isEmpty()) {
+                                    formation = name
+                                    selectedSlot = 0
+                                    dirty = true
+                                } else {
+                                    confirmFormation = name
+                                }
                             }
                         },
                         label = { Text(name) },
@@ -718,11 +1092,27 @@ fun LineupScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    "${assignments.size}/${slots.size} assigned",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${assignments.size}/${slots.size} assigned",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    // Autosave status (SB-1504) — there is no Save button.
+                    Text(
+                        when {
+                            saveState == SaveState.UNSAVED -> saveProblem ?: "Not saved"
+                            saveState == SaveState.SAVING || dirty -> "Saving…"
+                            else -> "Saved ✓"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (saveState == SaveState.UNSAVED) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 2,
+                    )
+                }
                 OutlinedButton(
                     onClick = { scope.launch { copyLastLineup() } },
                     enabled = roster.isNotEmpty(),
@@ -734,25 +1124,16 @@ fun LineupScreen(
                 ) { Text("Auto-fill") }
             }
             Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { save() },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                ) { Text("Save lineup") }
-                Button(
-                    onClick = {
-                        // Already running: save and go back to it rather than
-                        // offering to start it again (SB-677).
-                        if (alreadyStarted) save(showConfirmation = false) { onStartMatch() }
-                        else startDialog = true
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                ) { Text(if (alreadyStarted) "BACK TO MATCH" else "START MATCH") }
-            }
+            Button(
+                onClick = {
+                    // Already running: save and go back to it rather than
+                    // offering to start it again (SB-677).
+                    if (alreadyStarted) leave(then = onStartMatch) else startDialog = true
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) { Text(if (alreadyStarted) "BACK TO MATCH" else "START MATCH") }
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -763,23 +1144,84 @@ fun LineupScreen(
             onDismiss = { startDialog = false },
             onConfirm = { dur ->
                 startDialog = false
-                // Save the lineup before kickoff — that ordering is the whole
-                // reason this screen has a start button at all.
-                save(showConfirmation = false) {
+                // Kickoff is stamped at the tap, not after the save. The
+                // lineup is queued ahead of the clock — and a half-done one is
+                // fine: it stays editable from the match (SB-1504).
+                val kickoff = java.time.Instant.now().toString()
+                leave {
                     scope.launch {
                         runCatching {
                             container.liveRepo.enqueueClock(
                                 matchId,
-                                ClockRequest(
-                                    "start_first_half",
-                                    halfDuration = dur,
-                                    occurredAt = java.time.Instant.now().toString(),
-                                ),
+                                ClockRequest("start_first_half", halfDuration = dur, occurredAt = kickoff),
                             )
                         }.onSuccess { onStartMatch() }
                             .onFailure { snackbar.showSnackbar("Failed to start match") }
                     }
                 }
+            },
+        )
+    }
+
+    confirmFormation?.let { name ->
+        AlertDialog(
+            onDismissRequest = { confirmFormation = null },
+            title = { Text("Switch to $name?") },
+            text = { Text("This clears the ${assignments.size} players placed in $formation.") },
+            confirmButton = {
+                TextButton(onClick = { confirmFormation = null }) { Text("Keep $formation") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    confirmFormation = null
+                    formation = name
+                    assignments = emptyMap()
+                    selectedSlot = 0
+                    dirty = true
+                }) { Text("Switch") }
+            },
+        )
+    }
+
+    discardStaged?.let { go ->
+        val n = stagedByTeam.values.sumOf { it.size }
+        AlertDialog(
+            onDismissRequest = { discardStaged = null },
+            title = { Text("Subs not recorded") },
+            text = { Text("$n staged ${if (n == 1) "change hasn't" else "changes haven't"} been recorded. Leave without them?") },
+            confirmButton = {
+                TextButton(onClick = { discardStaged = null }) { Text("Stay") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    discardStaged = null
+                    stagedByTeam = emptyMap()
+                    nowStamps = emptyMap()
+                    go()
+                }) { Text("Discard") }
+            },
+        )
+    }
+
+    leaveAnyway?.let { go ->
+        AlertDialog(
+            onDismissRequest = { leaveAnyway = null },
+            title = { Text("Lineup not fully saved") },
+            text = {
+                Text(
+                    if (saveProblem == NUMBERS_NEED_SIGNAL) {
+                        "Shirt numbers with no roster entry need signal to save. The rest of the " +
+                            "lineup is saved; those numbers are lost if you leave now."
+                    } else {
+                        "The lineup couldn't be saved. Leaving now loses your changes."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { leaveAnyway = null }) { Text("Stay") }
+            },
+            dismissButton = {
+                TextButton(onClick = { leaveAnyway = null; go() }) { Text("Leave anyway") }
             },
         )
     }

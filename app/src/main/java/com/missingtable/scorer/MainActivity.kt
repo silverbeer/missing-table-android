@@ -118,7 +118,7 @@ private fun AppNav(container: AppContainer, startDestination: String) {
             )
         }
         composable(
-            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}"
+            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}&homeAgId={homeAgId}&awayAgId={awayAgId}"
         ) { entry ->
             val args = entry.arguments
             val matchId = args?.getString("matchId")?.toIntOrNull() ?: return@composable
@@ -126,6 +126,9 @@ private fun AppNav(container: AppContainer, startDestination: String) {
             val awayId = args.getString("awayId")?.toIntOrNull() ?: return@composable
             val seasonId = args.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
             val ageGroupId = args.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+            // A side playing up fields its own age group (SB-1444); else the match's.
+            val homeAgId = args.getString("homeAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
+            val awayAgId = args.getString("awayAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
             com.missingtable.scorer.ui.lineup.LineupScreen(
                 container = container,
                 matchId = matchId,
@@ -135,6 +138,7 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 awayTeamName = args.getString("awayName") ?: "Away",
                 seasonId = seasonId,
                 ageGroupName = args.getString("ageGroupName")?.takeIf { it.isNotBlank() },
+                ageGroupIds = mapOf(homeId to homeAgId, awayId to awayAgId),
                 alreadyStarted = args.getString("started") == "true",
                 onBack = { navController.popBackStack() },
                 onStartMatch = {
@@ -166,7 +170,8 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                                 "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
                                 "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
                             navController.navigate(
-                                "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common"
+                                "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common" +
+                                    "&homeAgId=${match.homeAgeGroupId ?: -1}&awayAgId=${match.awayAgeGroupId ?: -1}"
                             )
                         }
                         MatchDetail.Action.SCORE_LIVE -> navController.navigate("live/${match.id}?$common")

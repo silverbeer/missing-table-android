@@ -77,19 +77,24 @@ class SyncEngine(
             val head = dao.head() ?: return DrainResult.EMPTY
             if (head.status == PendingAction.Status.FAILED) return DrainResult.PAUSED
             dao.setStatus(head.id, PendingAction.Status.IN_FLIGHT, head.attemptCount, head.lastError)
+            // Send the row as it is now IN_FLIGHT, not as first read: a queued
+            // lineup save is rewritten in place (SB-1504), and an edit landing
+            // between head() and setStatus would otherwise be sent stale and
+            // then deleted. Once IN_FLIGHT, nothing rewrites it.
+            val sending = dao.byId(head.id) ?: continue
 
-            val failure = execute(head)
+            val failure = execute(sending)
             when {
                 failure == null -> dao.delete(head.id)
                 failure.transient -> {
                     dao.setStatus(
-                        head.id, PendingAction.Status.PENDING, head.attemptCount + 1, failure.message
+                        head.id, PendingAction.Status.PENDING, sending.attemptCount + 1, failure.message
                     )
                     return DrainResult.TRANSIENT_FAILURE
                 }
                 else -> {
                     dao.setStatus(
-                        head.id, PendingAction.Status.FAILED, head.attemptCount + 1, failure.message
+                        head.id, PendingAction.Status.FAILED, sending.attemptCount + 1, failure.message
                     )
                     return DrainResult.PAUSED
                 }
