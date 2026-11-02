@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.live
 
+import com.missingtable.scorer.data.api.getLineup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -229,7 +230,7 @@ fun LiveScreen(
         listOfNotNull(s.homeTeamId, s.awayTeamId).forEach { teamId ->
             runCatching { container.api.getLineup(matchId, teamId) }
                 .onSuccess { lineup ->
-                    if (lineup.positions.isNotEmpty()) saved[teamId] = lineup else saved.remove(teamId)
+                    if (lineup != null && lineup.positions.isNotEmpty()) saved[teamId] = lineup else saved.remove(teamId)
                 }
         }
         lineups = saved

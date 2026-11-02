@@ -20,6 +20,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
+import com.missingtable.scorer.data.api.NullBodyConverterFactory
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.concurrent.TimeUnit
 
@@ -53,6 +54,7 @@ class AppContainer(app: Application) {
     val api: MtApi = Retrofit.Builder()
         .baseUrl(BuildConfig.BASE_URL + "/")
         .client(client)
+        .addConverterFactory(NullBodyConverterFactory)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
         .create(MtApi::class.java)

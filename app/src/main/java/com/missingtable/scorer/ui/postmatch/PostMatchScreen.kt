@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.postmatch
 
+import com.missingtable.scorer.data.api.getLineup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -152,8 +153,9 @@ fun PostMatchScreen(
                             DropdownMenuItem(text = { Text("Fill minutes: $teamName") }, onClick = {
                                 menuOpen = false
                                 act("Minutes filled for $teamName") {
-                                    val lineup = container.api.getLineup(matchId, teamId)
-                                    require(lineup.positions.isNotEmpty()) { "No saved lineup" }
+                                    val lineup = requireNotNull(
+                                        container.api.getLineup(matchId, teamId)?.takeIf { it.positions.isNotEmpty() }
+                                    ) { "No saved lineup" }
                                     val matchLength = (state?.halfDuration ?: 45) * 2
                                     val derived = MinutesPlayed.derive(
                                         starters = lineup.positions.map { it.playerId }.toSet(),
