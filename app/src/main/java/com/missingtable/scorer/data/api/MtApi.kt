@@ -139,8 +139,12 @@ interface MtApi {
         @Body body: BulkRosterRequest,
     ): BulkRosterResponse
 
+    /** Raw form; call [getLineup], which maps the backend's `null` body to null. */
     @GET("api/matches/{id}/lineup/{teamId}")
-    suspend fun getLineup(@Path("id") matchId: Int, @Path("teamId") teamId: Int): LineupResponse
+    suspend fun getLineupResponse(
+        @Path("id") matchId: Int,
+        @Path("teamId") teamId: Int,
+    ): retrofit2.Response<LineupResponse>
 
     @retrofit2.http.PUT("api/matches/{id}/lineup/{teamId}")
     suspend fun putLineup(
@@ -210,4 +214,16 @@ interface MtApi {
     // so team managers can correct scorer/assister/minute.
     @PATCH("api/admin/goals/{eventId}")
     suspend fun patchGoalEvent(@Path("eventId") eventId: Int, @Body body: GoalEventUpdateRequest): JsonObject
+}
+
+/**
+ * The team's saved lineup, or null when none has been saved yet: the backend
+ * answers 200 with a `null` body then (SB-1511). Retrofit won't return null
+ * from a suspend call, so this goes through [retrofit2.Response]. Non-2xx
+ * still throws [retrofit2.HttpException], so a real failure stays a failure.
+ */
+suspend fun MtApi.getLineup(matchId: Int, teamId: Int): LineupResponse? {
+    val r = getLineupResponse(matchId, teamId)
+    if (!r.isSuccessful) throw retrofit2.HttpException(r)
+    return r.body()
 }

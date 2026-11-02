@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.lineup
 
+import com.missingtable.scorer.data.api.getLineup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
