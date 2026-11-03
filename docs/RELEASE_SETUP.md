@@ -159,8 +159,9 @@ At this point the item has all 5 fields. That's the whole source of truth.
 
 ## Step 3 — Push the secrets to GitHub (one script)
 
-The script reads the 1Password item and sets all 7 GitHub secrets — same
-password into both keystore secrets, keystore base64'd, no manual paste:
+The script sets all 8 GitHub secrets: 7 from the 1Password item — same
+password into both keystore secrets, keystore base64'd, no manual paste — and
+`GOOGLE_SERVICES_JSON_PROD` from tofu (see below):
 
 ```bash
 cd ~/gitrepos/missing-table-android
@@ -180,7 +181,7 @@ Verify (names only, values never shown):
 gh secret list
 ```
 
-The 7 it sets, all from the one item:
+The 7 it sets from the one item:
 
 | Secret | From 1Password field |
 |--------|----------------------|
@@ -191,6 +192,34 @@ The 7 it sets, all from the one item:
 | `R2_ACCOUNT_ID` | `r2_account_id` |
 | `R2_ACCESS_KEY_ID` | `r2_access_key_id` |
 | `R2_SECRET_ACCESS_KEY` | `r2_secret_access_key` |
+
+Plus one that does **not** come from 1Password:
+
+| Secret | From |
+|--------|------|
+| `GOOGLE_SERVICES_JSON_PROD` | tofu output `google_services_json.prod` in `missingtable-platform-bootstrap` → `clouds/gcp/global/firebase-messaging` (SB-1464) |
+
+The script pipes it straight from `tofu output` into `gh secret set` (never
+printed, never written to disk) and skips it with a warning if `tofu`, `jq` or
+the bootstrap checkout are missing. Override the checkout location with
+`BOOTSTRAP=/path/to/missingtable-platform-bootstrap`.
+
+### Push notifications: `google-services.json` (SB-1464)
+
+The app reads Firebase's client config from a **gitignored**, per-flavor
+`app/src/<flavor>/google-services.json` and turns it into `FIREBASE_*`
+BuildConfig fields — there is no google-services Gradle plugin and no
+Analytics. Without the file the app still builds; push is simply off.
+
+- **CI:** the release job writes `GOOGLE_SERVICES_JSON_PROD` to
+  `app/src/prod/google-services.json` before the signed build. If the secret is
+  unset it logs a warning and ships without push.
+- **Local:** `./scripts/fetch-google-services.sh` writes both flavors' files
+  from the same tofu output (prints byte counts only). Alternatively set
+  `FIREBASE_<FLAVOR>_APP_ID`, `_API_KEY`, `_PROJECT_ID`, `_SENDER_ID` in the
+  environment.
+
+This repo is public: never commit `google-services.json`.
 
 ---
 

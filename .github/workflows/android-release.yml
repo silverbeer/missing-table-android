@@ -41,6 +41,19 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
+      # Firebase client config for push (SB-1464). Optional: without it the
+      # build still succeeds, with push switched off in the shipped APK.
+      - name: Write prod google-services.json
+        env:
+          GOOGLE_SERVICES_JSON_PROD: ${{ secrets.GOOGLE_SERVICES_JSON_PROD }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON_PROD" ]; then
+            mkdir -p app/src/prod
+            printf '%s' "$GOOGLE_SERVICES_JSON_PROD" > app/src/prod/google-services.json
+          else
+            echo "::warning::GOOGLE_SERVICES_JSON_PROD not set — building without push"
+          fi
+
       - name: Build signed prod release APK
         env:
           ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks

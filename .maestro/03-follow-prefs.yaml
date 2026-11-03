@@ -1,0 +1,109 @@
+# Follow / unfollow a team and notification settings (SB-1464). Needs what
+# 02-login-tabs needs, plus at least one match in the Matches tab's current
+# week:
+#   maestro test -e MT_E2E_USER=... -e MT_E2E_PASS=... .maestro/03-follow-prefs.yaml
+# Follows and prefs live server-side and survive clearState, so the flow first
+# resets anything a previous (failed) run left behind. Push delivery itself is
+# not asserted — that needs FCM and a real send; see the ticket's manual check.
+appId: com.missingtable.scorer.local
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Username'
+- inputText: '${MT_E2E_USER}'
+- tapOn: 'Password'
+- inputText: '${MT_E2E_PASS}'
+- hideKeyboard
+- tapOn: 'Sign in'
+- extendedWaitUntil:
+    visible: 'Matches'
+    timeout: 15000
+
+# Open the first match in the list.
+- extendedWaitUntil:
+    visible: '.* vs .*'
+    timeout: 15000
+- tapOn:
+    text: '.* vs .*'
+    index: 0
+- extendedWaitUntil:
+    visible: 'Follow|Following'
+    timeout: 15000
+
+# Leftovers from an earlier run: unfollow both sides first.
+- repeat:
+    while:
+      visible: 'Following'
+    commands:
+      - tapOn: 'Following'
+
+# Follow the home side. Android 13+ asks for notification permission on the
+# first follow after a clean install.
+- tapOn:
+    text: 'Follow'
+    index: 0
+- runFlow:
+    when:
+      visible: 'Allow'
+    commands:
+      - tapOn: 'Allow'
+- extendedWaitUntil:
+    visible: 'Following'
+    timeout: 10000
+
+# Profile lists it; unfollow from there.
+- back
+- tapOn: 'Profile'
+- extendedWaitUntil:
+    visible: 'Unfollow'
+    timeout: 10000
+- tapOn:
+    text: 'Unfollow'
+    index: 0
+
+# Back on the match, the button agrees.
+- tapOn: 'Matches'
+- extendedWaitUntil:
+    visible: '.* vs .*'
+    timeout: 15000
+- tapOn:
+    text: '.* vs .*'
+    index: 0
+- extendedWaitUntil:
+    visible: 'Follow'
+    timeout: 15000
+- assertNotVisible: 'Following'
+- back
+
+# Notification settings: a toggle persists across leaving and re-entering.
+- tapOn: 'Profile'
+- tapOn: 'Notification settings'
+- extendedWaitUntil:
+    visible: 'Yellow cards'
+    timeout: 10000
+# Start from the server default (off).
+- runFlow:
+    when:
+      visible:
+        text: 'Yellow cards'
+        checked: true
+    commands:
+      - tapOn: 'Yellow cards'
+- tapOn: 'Yellow cards'
+- assertVisible:
+    text: 'Yellow cards'
+    checked: true
+- back
+- tapOn: 'Notification settings'
+- extendedWaitUntil:
+    visible:
+      text: 'Yellow cards'
+      checked: true
+    timeout: 10000
+# Put it back.
+- tapOn: 'Yellow cards'
+- assertVisible:
+    text: 'Yellow cards'
+    checked: false
+- back
+- assertVisible: 'Log out'

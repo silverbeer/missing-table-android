@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.match
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,8 @@ import com.missingtable.scorer.domain.MatchDetail
 import com.missingtable.scorer.domain.MotwCopy
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.ui.preview.MatchPreviewSection
+import com.missingtable.scorer.ui.team.FollowButton
+import com.missingtable.scorer.ui.team.teamSubtitle
 import java.time.Instant
 
 /**
@@ -60,6 +63,8 @@ fun MatchDetailScreen(
     matchId: Int,
     onBack: () -> Unit,
     onAction: (MatchSummary, MatchDetail.Action) -> Unit,
+    // teamId, name, subtitle — the team screen has no endpoint of its own (SB-1464).
+    onOpenTeam: (Int, String, String?) -> Unit = { _, _, _ -> },
 ) {
     var match by remember { mutableStateOf<MatchSummary?>(null) }
     var events by remember { mutableStateOf<List<MatchEvent>>(emptyList()) }
@@ -122,7 +127,17 @@ fun MatchDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Header(m)
+            Header(m, onOpenTeam)
+
+            // One per side, under that side's crest (SB-1464).
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    FollowButton(container, m.homeTeamId)
+                }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    FollowButton(container, m.awayTeamId)
+                }
+            }
 
             val actions = MatchDetail.actions(m.matchStatus, m.canManage)
             if (actions.isNotEmpty()) {
@@ -163,21 +178,33 @@ fun MatchDetailScreen(
 
 /** Crests and names either side of the score (or kickoff), status underneath. */
 @Composable
-private fun Header(m: MatchSummary) {
+private fun Header(m: MatchSummary, onOpenTeam: (Int, String, String?) -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Side(m.homeTeamClub?.logoUrl, m.homeTeamName, Modifier.weight(1f))
+            Side(
+                m.homeTeamClub?.logoUrl,
+                m.homeTeamName,
+                Modifier
+                    .weight(1f)
+                    .clickable { onOpenTeam(m.homeTeamId, m.homeTeamName, subtitle(m, m.homeTeamName, m.homeTeamClub?.name)) },
+            )
             Text(
                 if (MotwCopy.hasScore(m)) "${m.homeScore} – ${m.awayScore}" else "v",
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
-            Side(m.awayTeamClub?.logoUrl, m.awayTeamName, Modifier.weight(1f))
+            Side(
+                m.awayTeamClub?.logoUrl,
+                m.awayTeamName,
+                Modifier
+                    .weight(1f)
+                    .clickable { onOpenTeam(m.awayTeamId, m.awayTeamName, subtitle(m, m.awayTeamName, m.awayTeamClub?.name)) },
+            )
         }
         Text(
             MotwCopy.statusLabel(m, Instant.now()),
@@ -193,6 +220,9 @@ private fun Header(m: MatchSummary) {
         )
     }
 }
+
+private fun subtitle(m: MatchSummary, teamName: String, clubName: String?): String? =
+    teamSubtitle(teamName, clubName, m.leagueName, m.divisionName)
 
 @Composable
 private fun Side(logoUrl: String?, name: String, modifier: Modifier) {

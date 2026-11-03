@@ -2,6 +2,10 @@ package com.missingtable.scorer.data.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class LoginRequest(val username: String, val password: String)
@@ -493,4 +497,93 @@ data class ClockRequest(
 @Serializable
 data class MatchPatchRequest(
     @SerialName("half_duration") val halfDuration: Int? = null,
+)
+
+// ── Push: devices, follows, preferences (SB-1464) ────────────────────────────
+
+/** Registers this install's Firebase Installation ID; the server upserts on fid. */
+@Serializable
+data class FcmDeviceRequest(
+    val fid: String,
+    @SerialName("app_version") val appVersion: String? = null,
+    @SerialName("device_label") val deviceLabel: String? = null,
+)
+
+/** The fid is write-only — never echoed — so `id` is what logout deletes by. */
+@Serializable
+data class FcmDeviceResponse(
+    val id: String,
+    @SerialName("device_label") val deviceLabel: String? = null,
+    @SerialName("app_version") val appVersion: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("last_seen_at") val lastSeenAt: String? = null,
+)
+
+@Serializable
+data class FcmDevicesResponse(val devices: List<FcmDeviceResponse> = emptyList())
+
+@Serializable
+data class TeamFollowRequest(@SerialName("team_id") val teamId: Int)
+
+@Serializable
+data class TeamFollowResult(
+    @SerialName("team_id") val teamId: Int,
+    val following: Boolean = true,
+)
+
+@Serializable
+data class TeamFollowsResponse(val follows: List<TeamFollow> = emptyList())
+
+@Serializable
+data class TeamFollow(
+    @SerialName("team_id") val teamId: Int,
+    @SerialName("created_at") val createdAt: String? = null,
+    val team: FollowTeam? = null,
+)
+
+@Serializable
+data class FollowTeam(
+    val id: Int? = null,
+    val name: String? = null,
+    @SerialName("age_group_id") val ageGroupId: Int? = null,
+    val club: NamedRef? = null,
+    val division: FollowDivision? = null,
+)
+
+@Serializable
+data class NamedRef(val id: Int? = null, val name: String? = null)
+
+@Serializable
+data class FollowDivision(
+    val id: Int? = null,
+    val name: String? = null,
+    // PostgREST embeds the league as an object, but an embed's cardinality is
+    // the server's call — tolerate a list, or nothing at all.
+    val leagues: JsonElement? = null,
+) {
+    val leagueName: String?
+        get() {
+            val el = leagues ?: return null
+            val obj = when (el) {
+                is JsonObject -> el
+                is JsonArray -> el.firstOrNull() as? JsonObject
+                else -> null
+            } ?: return null
+            return (obj["name"] as? JsonPrimitive)
+                ?.takeIf { it.isString }?.content
+        }
+}
+
+/** GET returns the full map; PUT takes a partial one and returns the merge. */
+@Serializable
+data class NotificationPrefs(val preferences: Map<String, Boolean> = emptyMap())
+
+@Serializable
+data class TestNotificationResponse(
+    val sent: Int = 0,
+    val failed: Int = 0,
+    val expired: Int = 0,
+    val subscriptions: Int = 0,
+    @SerialName("apns_devices") val apnsDevices: Int = 0,
+    @SerialName("fcm_devices") val fcmDevices: Int = 0,
 )

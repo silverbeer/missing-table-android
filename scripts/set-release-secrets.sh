@@ -13,15 +13,23 @@
 #   r2_access_key_id       CI R2 token access key id (Object R&W on mt-android-releases)
 #   r2_secret_access_key   CI R2 token secret
 #
+# Also sets GOOGLE_SERVICES_JSON_PROD (SB-1464) — the prod flavor's Firebase
+# client config — from the bootstrap repo's tofu output rather than 1Password,
+# since tofu already holds it. Skipped with a warning if tofu/jq or the stack
+# are unavailable, so the signing secrets can still be set without them.
+#
 # Overrides via env:
 #   OP_VAULT   default: Personal
 #   OP_ITEM    default: mt-android-release
 #   GH_REPO    default: silverbeer/missing-table-android
+#   BOOTSTRAP  default: ~/gitrepos/missingtable-platform-bootstrap
 set -euo pipefail
 
 VAULT="${OP_VAULT:-Personal}"
 ITEM="${OP_ITEM:-mt-android-release}"
 REPO="${GH_REPO:-silverbeer/missing-table-android}"
+BOOTSTRAP="${BOOTSTRAP:-$HOME/gitrepos/missingtable-platform-bootstrap}"
+FIREBASE_STACK="$BOOTSTRAP/clouds/gcp/global/firebase-messaging"
 
 for c in op gh; do
   command -v "$c" >/dev/null || { echo "✗ missing command: $c" >&2; exit 1; }
@@ -59,5 +67,16 @@ set_secret ANDROID_KEY_ALIAS         "missingtable"
 set_secret R2_ACCOUNT_ID             "$r2_account"
 set_secret R2_ACCESS_KEY_ID          "$r2_key_id"
 set_secret R2_SECRET_ACCESS_KEY      "$r2_secret"
+
+# Firebase client config for the prod flavor (SB-1464). Piped straight from
+# tofu into gh — never echoed, never written to disk.
+if command -v tofu >/dev/null && command -v jq >/dev/null && [ -d "$FIREBASE_STACK" ]; then
+  tofu -chdir="$FIREBASE_STACK" output -json google_services_json | jq -er .prod |
+    gh secret set GOOGLE_SERVICES_JSON_PROD --repo "$REPO" >/dev/null ||
+    { echo "✗ couldn't set GOOGLE_SERVICES_JSON_PROD from tofu output" >&2; exit 1; }
+  echo "  ✓ GOOGLE_SERVICES_JSON_PROD"
+else
+  echo "  ! GOOGLE_SERVICES_JSON_PROD skipped (needs tofu, jq and $FIREBASE_STACK)" >&2
+fi
 
 echo "✓ Done. Verify:  gh secret list --repo ${REPO}"
