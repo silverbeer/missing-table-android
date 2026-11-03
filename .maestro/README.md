@@ -24,12 +24,20 @@ adb install -r app/build/outputs/apk/local/debug/app-local-debug.apk
 | `01-launch.yaml` | nothing (no backend, no account) | app boots, login screen renders — catches startup crashes |
 | `01-launch-prod.yaml` | prod-flavor APK installed | same asserts against `com.missingtable.scorer` — the release-gate smoke (SB-353); keep in lockstep with `01-launch.yaml` |
 | `02-login-tabs.yaml` | backend reachable for the installed flavor + creds via env | login works, all five tabs render, logout returns to login |
+| `03-follow-prefs.yaml` | as `02`, plus at least one match in the current week | Follow → Following on Match Detail (allowing the Android 13+ permission prompt), Profile lists it and Unfollow clears it; a notification-settings toggle persists across re-entry (SB-1464) |
 
 ```bash
 maestro test .maestro/01-launch.yaml
 maestro test -e MT_E2E_USER=e2e_admin -e MT_E2E_PASS='AdminPassword123!' \
   .maestro/02-login-tabs.yaml
+maestro test -e MT_E2E_USER=e2e_admin -e MT_E2E_PASS='AdminPassword123!' \
+  .maestro/03-follow-prefs.yaml
 ```
+
+`03-follow-prefs` changes server-side state (follows, notification prefs) and
+resets it on the way in and out, so a run that dies midway is cleaned up by
+the next one. It does not assert push delivery — that needs a Firebase config
+in the build (`scripts/fetch-google-services.sh`) and a real send.
 
 The `local` flavor talks to `http://10.0.2.2:8000` (host loopback) — start the
 missing-table backend first and seed the `e2e_*` accounts:

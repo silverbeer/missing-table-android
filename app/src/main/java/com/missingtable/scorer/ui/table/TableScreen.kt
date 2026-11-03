@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.table
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import com.missingtable.scorer.data.api.SeasonDto
 import com.missingtable.scorer.data.api.StandingRow
 import com.missingtable.scorer.domain.Leagues
 import com.missingtable.scorer.domain.Seasons
+import com.missingtable.scorer.ui.team.teamSubtitle
 
 /**
  * League table with the web's four filters (SB-340), replicating
@@ -54,7 +56,11 @@ import com.missingtable.scorer.domain.Seasons
  * See [Leagues.divisionChips].
  */
 @Composable
-fun TableScreen(container: AppContainer) {
+fun TableScreen(
+    container: AppContainer,
+    // teamId, name, subtitle — a row opens its team (SB-1464).
+    onOpenTeam: (Int, String, String?) -> Unit = { _, _, _ -> },
+) {
     var ageGroups by remember { mutableStateOf<List<AgeGroupDto>>(emptyList()) }
     var leagues by remember { mutableStateOf<List<LeagueDto>>(emptyList()) }
     var seasons by remember { mutableStateOf<List<SeasonDto>>(emptyList()) }
@@ -182,7 +188,15 @@ fun TableScreen(container: AppContainer) {
                         numbered,
                         key = { (idx, row) -> row.teamId?.let { "team-$it" } ?: "row-$idx" },
                     ) { (idx, row) ->
-                        StandingLine(position = idx + 1, row = row)
+                        StandingLine(position = idx + 1, row = row) { teamId ->
+                            val sub = teamSubtitle(
+                                row.team,
+                                null,
+                                leagues.firstOrNull { it.id == selectedLeague }?.name,
+                                divisionOptions.firstOrNull { it.id == selectedDivision }?.name,
+                            )
+                            onOpenTeam(teamId, row.team, sub)
+                        }
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
                 }
@@ -255,9 +269,13 @@ private fun HeaderRow() {
 }
 
 @Composable
-private fun StandingLine(position: Int, row: StandingRow) {
+private fun StandingLine(position: Int, row: StandingRow, onOpenTeam: (Int) -> Unit) {
+    val teamId = row.teamId
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(if (teamId != null) Modifier.clickable { onOpenTeam(teamId) } else Modifier)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Cell("$position", 28.dp)

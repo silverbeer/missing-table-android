@@ -210,6 +210,38 @@ interface MtApi {
         @Body body: BatchPlayerStatsUpdate,
     ): JsonObject
 
+    // ── Push: devices, follows, preferences (SB-1464) ────────────────────────
+
+    @POST("api/users/me/fcm-devices")
+    suspend fun registerFcmDevice(@Body body: FcmDeviceRequest): FcmDeviceResponse
+
+    @GET("api/users/me/fcm-devices")
+    suspend fun fcmDevices(): FcmDevicesResponse
+
+    @DELETE("api/users/me/fcm-devices/{id}")
+    suspend fun deleteFcmDevice(@Path("id") deviceId: String): retrofit2.Response<Unit>
+
+    @POST("api/users/me/team-follows")
+    suspend fun followTeam(@Body body: TeamFollowRequest): TeamFollowResult
+
+    /** Idempotent: 204 whether or not the follow existed. */
+    @DELETE("api/users/me/team-follows/{teamId}")
+    suspend fun unfollowTeam(@Path("teamId") teamId: Int): retrofit2.Response<Unit>
+
+    @GET("api/users/me/team-follows")
+    suspend fun teamFollows(): TeamFollowsResponse
+
+    @GET("api/users/me/notification-preferences")
+    suspend fun notificationPrefs(): NotificationPrefs
+
+    /** Partial update; unknown keys are a 422. Returns the merged map. */
+    @retrofit2.http.PUT("api/users/me/notification-preferences")
+    suspend fun putNotificationPrefs(@Body body: NotificationPrefs): NotificationPrefs
+
+    /** 429 when rate-limited, 503 when no push channel is configured server-side. */
+    @POST("api/users/me/notifications/test")
+    suspend fun testNotification(): TestNotificationResponse
+
     // Despite the /admin/ path this is gated by match-management permission,
     // so team managers can correct scorer/assister/minute.
     @PATCH("api/admin/goals/{eventId}")

@@ -1,5 +1,6 @@
 package com.missingtable.scorer
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,8 +25,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -34,23 +38,40 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.missingtable.scorer.domain.MatchDetail
+import com.missingtable.scorer.domain.NotificationIntent
 import com.missingtable.scorer.ui.leaderboard.LeaderboardScreen
 import com.missingtable.scorer.ui.live.LiveScreen
 import com.missingtable.scorer.ui.login.LoginScreen
 import com.missingtable.scorer.ui.matches.MatchListScreen
+import com.missingtable.scorer.ui.profile.NotificationPrefsScreen
 import com.missingtable.scorer.ui.profile.ProfileScreen
 import com.missingtable.scorer.ui.table.TableScreen
 import com.missingtable.scorer.ui.tournaments.TournamentsScreen
+import com.missingtable.scorer.ui.team.TeamScreen
 import com.missingtable.scorer.ui.theme.MtTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * Match a tapped push points at (SB-1464), until AppNav has opened it.
+     * Killed app: the launch intent, in onCreate. Running app: singleTop
+     * delivers it to onNewIntent.
+     */
+    private val pendingMatchId = MutableStateFlow<Int?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = (application as MtApp).container
         val loggedIn = runBlocking { container.tokenStore.accessToken() != null }
+        // Not on recreation, nor when relaunched from Recents: both replay the
+        // original intent, and the match was already opened from it.
+        val fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory) pendingMatchId.value = matchIdFrom(intent)
 
         setContent {
             MtTheme {
@@ -58,16 +79,63 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    AppNav(container, startDestination = if (loggedIn) "home" else "login")
+                    AppNav(
+                        container,
+                        startDestination = if (loggedIn) "home" else "login",
+                        pendingMatchId = pendingMatchId,
+                    )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        matchIdFrom(intent)?.let { pendingMatchId.value = it }
+    }
+
+    private fun matchIdFrom(intent: Intent?): Int? {
+        val extras = intent?.extras ?: return null
+        return NotificationIntent.matchIdFrom(
+            mapOf(
+                NotificationIntent.EXTRA_MATCH_ID to extras.getString(NotificationIntent.EXTRA_MATCH_ID),
+                NotificationIntent.EXTRA_URL to extras.getString(NotificationIntent.EXTRA_URL),
+            )
+        )
+    }
 }
 
+/** Team screen route; name and subtitle ride along because there is no team endpoint (SB-1464). */
+private fun teamRoute(teamId: Int, name: String, subtitle: String?): String =
+    "team/$teamId?name=${android.net.Uri.encode(name)}&subtitle=${android.net.Uri.encode(subtitle ?: "")}"
+
 @Composable
-private fun AppNav(container: AppContainer, startDestination: String) {
+private fun AppNav(
+    container: AppContainer,
+    startDestination: String,
+    pendingMatchId: MutableStateFlow<Int?>,
+) {
     val navController: NavHostController = rememberNavController()
+    val scope = rememberCoroutineScope()
+    val pending by pendingMatchId.collectAsState()
+    // HomeShell's update check: null until it has answered, then whether
+    // this build is hard-blocked (SB-328).
+    val forceUpdate = remember { MutableStateFlow<Boolean?>(null) }
+
+    // A tapped push opens its match (SB-1464) — but only once past login, so
+    // a signed-out tap survives signing in, and login's own navigation to
+    // home (which pops everything above login) cannot discard it. Never past
+    // the force-update block: a blocked build stays on the gate, and the
+    // match is left pending.
+    LaunchedEffect(pending) {
+        val id = pending ?: return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first { it.destination.route != "login" }
+        container.tokenStore.accessTokenFlow.first { it != null }
+        if (forceUpdate.first { it != null } == true) return@LaunchedEffect
+        navController.navigate("match/$id")
+        pendingMatchId.compareAndSet(id, null)
+    }
 
     // Refresh cached role/team/club on cold start (SB-317) — best-effort.
     LaunchedEffect(Unit) {
@@ -77,6 +145,9 @@ private fun AppNav(container: AppContainer, startDestination: String) {
     // Session-expiry watchdog: TokenAuthenticator clears the store when the
     // refresh token is rejected (401). Token going non-null -> null while the
     // app is running means the session died out from under us — drop to login.
+    // Expiry skips logout, so tear the push session down here too (SB-1464);
+    // after an explicit logout this repeats a teardown that already ran,
+    // which is a no-op.
     LaunchedEffect(Unit) {
         var hadToken = false
         container.tokenStore.accessTokenFlow.collect { token ->
@@ -84,6 +155,7 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 hadToken = true
             } else if (hadToken) {
                 hadToken = false
+                scope.launch { container.teardownSession(canCallServer = false) }
                 if (navController.currentDestination?.route != "login") {
                     navController.navigate("login") { popUpTo(0) { inclusive = true } }
                 }
@@ -109,13 +181,37 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 // preview and result, and scoring is a button there for those
                 // the server says may manage this match.
                 onOpenMatch = { match -> navController.navigate("match/${match.id}") },
+                onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
+                onOpenNotificationPrefs = { navController.navigate("notification-prefs") },
+                onUpdateChecked = { forceUpdate.value = it },
                 onLogout = {
-                    runBlocking { container.tokenStore.clear() }
-                    navController.navigate("login") {
-                        popUpTo("home") { inclusive = true }
+                    scope.launch {
+                        // Device off the account while the DELETE can still
+                        // authenticate, then the tokens (SB-1464); bounded, so
+                        // logout never hangs on it.
+                        container.teardownSession(canCallServer = true)
+                        // The expiry watchdog may have got there first.
+                        if (navController.currentDestination?.route != "login") {
+                            navController.navigate("login") {
+                                popUpTo("home") { inclusive = true }
+                            }
+                        }
                     }
                 },
             )
+        }
+        composable("team/{teamId}?name={name}&subtitle={subtitle}") { entry ->
+            val teamId = entry.arguments?.getString("teamId")?.toIntOrNull() ?: return@composable
+            TeamScreen(
+                container = container,
+                teamId = teamId,
+                name = entry.arguments?.getString("name")?.takeIf { it.isNotBlank() },
+                subtitle = entry.arguments?.getString("subtitle")?.takeIf { it.isNotBlank() },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable("notification-prefs") {
+            NotificationPrefsScreen(container = container, onBack = { navController.popBackStack() })
         }
         composable(
             "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}&homeAgId={homeAgId}&awayAgId={awayAgId}"
@@ -162,6 +258,7 @@ private fun AppNav(container: AppContainer, startDestination: String) {
                 container = container,
                 matchId = matchId,
                 onBack = { navController.popBackStack() },
+                onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
                 onAction = { match, action ->
                     val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
                     when (action) {
@@ -272,6 +369,9 @@ private enum class HomeTab(val label: String) {
 private fun HomeShell(
     container: AppContainer,
     onOpenMatch: (com.missingtable.scorer.data.api.MatchSummary) -> Unit,
+    onOpenTeam: (Int, String, String?) -> Unit,
+    onOpenNotificationPrefs: () -> Unit,
+    onUpdateChecked: (forceUpdate: Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(HomeTab.Matches) }
@@ -289,6 +389,8 @@ private fun HomeShell(
             resp.versionCode?.let { updateAvailable = it > mine }
             resp.minVersionCode?.let { forceUpdate = !BuildConfig.DEBUG && mine < it }
         }
+        // Answered either way: a failed check blocks nothing here either.
+        onUpdateChecked(forceUpdate)
     }
 
     // Mint a fresh presigned URL at tap time (5-min TTL) and open the browser.
@@ -343,10 +445,15 @@ private fun HomeShell(
                     updateAvailable = updateAvailable,
                     onDownloadUpdate = downloadLatest,
                 )
-                HomeTab.Table -> TableScreen(container)
+                HomeTab.Table -> TableScreen(container, onOpenTeam = onOpenTeam)
                 HomeTab.Tournaments -> TournamentsScreen(container)
                 HomeTab.Leaders -> LeaderboardScreen(container)
-                HomeTab.Profile -> ProfileScreen(container, onLogout = onLogout)
+                HomeTab.Profile -> ProfileScreen(
+                    container,
+                    onLogout = onLogout,
+                    onOpenTeam = onOpenTeam,
+                    onOpenNotificationPrefs = onOpenNotificationPrefs,
+                )
             }
         }
     }

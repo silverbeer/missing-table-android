@@ -12,3 +12,6 @@ captures/
 # Release signing keystore — never commit; provided to CI via base64 secret.
 *.jks
 .idea/
+# Firebase client config (SB-1464) — per-flavor, fetched from tofu output by
+# scripts/fetch-google-services.sh; CI decodes it from a secret. Public repo.
+**/google-services.json

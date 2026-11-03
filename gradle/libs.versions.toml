@@ -17,6 +17,7 @@ work = "2.10.1"
 junit = "4.13.2"
 robolectric = "4.15.1"
 androidxTestCore = "1.6.1"
+firebaseBom = "35.1.0"
 
 [libraries]
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
@@ -47,6 +48,11 @@ okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor",
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+# Push (SB-1464): messaging + installations only — no analytics, no
+# google-services Gradle plugin (FirebaseApp is initialised by hand).
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
+firebase-installations = { group = "com.google.firebase", name = "firebase-installations" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
