@@ -1,6 +1,7 @@
 package com.missingtable.scorer.data.push
 
 import android.content.Context
+import android.util.Log
 import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
 import com.google.firebase.installations.FirebaseInstallations
@@ -177,8 +178,14 @@ class FirebaseFidSource(private val context: Context) : FidSource {
             val ok = runCatching {
                 // Task<Void>: the result is null, so success is "returned in time".
                 withTimeoutOrNull(AWAIT_TIMEOUT_MS) { FirebaseMessaging.getInstance().register().await(); true } ?: false
-            }.getOrDefault(false)
-            if (!ok) fcmRegistered.set(false)
+            }.onFailure { Log.w(TAG, "FCM register() failed", it) }
+                .getOrDefault(false)
+            if (!ok) {
+                // Don't hand the server an FID FCM doesn't know: its first send
+                // would come back UNREGISTERED and prune the row. Retry next time.
+                fcmRegistered.set(false)
+                return null
+            }
         }
         return runCatching {
             withTimeoutOrNull(AWAIT_TIMEOUT_MS) { FirebaseInstallations.getInstance().id.await() }
@@ -195,6 +202,7 @@ class FirebaseFidSource(private val context: Context) : FidSource {
 
     private companion object {
         const val AWAIT_TIMEOUT_MS = 5_000L
+        const val TAG = "PushRegistrar"
     }
 }
 

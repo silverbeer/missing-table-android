@@ -35,6 +35,11 @@
         </service>
 
         <!-- Background/killed pushes are drawn by FCM itself: use our channel and icon. -->
+        <!-- Opt-in for FID-based FCM (FirebaseMessaging.register()); without it
+             register() throws "API disabled" and FCM answers UNREGISTERED. -->
+        <meta-data
+            android:name="firebase_messaging_installation_id_enabled"
+            android:value="true" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="live_scores" />
