@@ -104,7 +104,22 @@ interface MtApi {
     suspend fun availableMatchTypes(
         @Query("season_id") seasonId: Int? = null,
         @Query("age_group_id") ageGroupId: Int? = null,
+        // A division and its child leagues: Homegrown is League + Flex (SB-1596).
+        @Query("league_id") leagueId: Int? = null,
     ): List<MatchTypeDto>
+
+    /**
+     * A division's conferences that have fixtures for this season and age
+     * group, for one competition (SB-1596): Homegrown + Flex is the Flex
+     * conferences. No match_type keeps the division's own.
+     */
+    @GET("api/divisions/available")
+    suspend fun availableDivisions(
+        @Query("league_id") leagueId: Int,
+        @Query("season_id") seasonId: Int? = null,
+        @Query("age_group_id") ageGroupId: Int? = null,
+        @Query("match_type") matchType: String? = null,
+    ): List<DivisionDto>
 
     /**
      * The featured match for a week (SB-1108). `week_start` is any date in the

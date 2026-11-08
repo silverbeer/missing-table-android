@@ -259,7 +259,22 @@ data class LineupResponse(
 )
 
 @Serializable
-data class TableResponse(val standings: List<StandingRow> = emptyList())
+data class TableResponse(
+    val standings: List<StandingRow> = emptyList(),
+    val coverage: TableCoverage? = null,
+)
+
+/** What the table counted (SB-1043, SB-1027) — drives its captions. */
+@Serializable
+data class TableCoverage(
+    // Null means every competition.
+    val competitions: List<String> = emptyList(),
+    val fixtures: Int = 0,
+    @SerialName("counted_by_competition") val countedByCompetition: Map<String, Int> = emptyMap(),
+    @SerialName("matches_vs_outside_table") val matchesVsOutsideTable: Int = 0,
+    @SerialName("teams_outside_table") val teamsOutsideTable: Int = 0,
+    @SerialName("shootout_points") val shootoutPoints: List<String> = emptyList(),
+)
 
 @Serializable
 data class StandingRow(
@@ -333,6 +348,12 @@ data class MatchTypeDto(
     val name: String = "",
     @SerialName("display_order") val displayOrder: Int? = null,
     @SerialName("counts_for_qualification") val countsForQualification: Boolean = false,
+    // `/api/match-types/available` only (SB-1596). Null means an API that
+    // predates the column: offer the competition rather than hide it.
+    @SerialName("has_standings") val hasStandings: Boolean? = null,
+    // Matches filed to the division's own conferences: how the API says
+    // which competition a division opens on (League for Homegrown).
+    @SerialName("in_division") val inDivision: Int = 0,
 )
 
 /**
