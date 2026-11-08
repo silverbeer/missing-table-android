@@ -33,6 +33,8 @@ class LiveMatchRepository(
 
     fun pendingCount(): Flow<Int> = dao.observeCount()
 
+    fun pendingAll(): Flow<List<PendingAction>> = dao.observeAll()
+
     suspend fun enqueueGoal(matchId: Int, req: GoalRequest) = enqueue(
         matchId, PendingAction.ActionType.GOAL, json.encodeToString(req), req.clientEventId
     )
