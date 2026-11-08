@@ -67,9 +67,9 @@ interface MtApi {
     suspend fun goalsLeaderboard(
         @Query("season_id") seasonId: Int,
         @Query("age_group_id") ageGroupId: Int? = null,
-        // Singular by design server-side, which is why Leaders has no
-        // "League + Flex" chip the way Matches does (SB-1119).
-        @Query("match_type_id") matchTypeId: Int? = null,
+        // Repeated once per type: League + Flex sends both and the server
+        // totals them (SB-1594). Null or empty means every competition.
+        @Query("match_type_id") matchTypeIds: List<Int>? = null,
         @Query("limit") limit: Int = 50,
     ): List<LeaderboardEntry>
 

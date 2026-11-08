@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
  *
  * Filtered by age group and competition (SB-1119). Both are query params
  * rather than passes over a loaded list, which is why this tab has no "All"
- * competition and no "League + Flex" — see [LeaderFilters]. Every change
+ * competition; "League + Flex" sends both ids (SB-1594) — see [LeaderFilters]. Every change
  * refetches; the list is small and this is not a match-day screen.
  */
 @Composable
@@ -88,7 +88,7 @@ fun LeaderboardScreen(container: AppContainer) {
     val activeType = LeaderFilters.resolve(chips, savedType)
     val typeDropped = LeaderFilters.savedChoiceUnavailable(chips, savedType)
 
-    LaunchedEffect(savedAgeGroup, activeType?.id, typesResolved) {
+    LaunchedEffect(savedAgeGroup, activeType?.typeIds, typesResolved) {
         if (!typesResolved) return@LaunchedEffect
         entries = null
         error = null
@@ -97,7 +97,7 @@ fun LeaderboardScreen(container: AppContainer) {
             container.api.goalsLeaderboard(
                 seasonId = seasonId,
                 ageGroupId = savedAgeGroup,
-                matchTypeId = activeType?.id,
+                matchTypeIds = activeType?.typeIds,
             )
         }
             .onSuccess { entries = it }
@@ -154,7 +154,7 @@ fun LeaderboardScreen(container: AppContainer) {
 }
 
 /** "Top scorers · League · U15" — every part that is known, none that is not. */
-private fun scopeLabel(type: MatchTypeDto?, ageGroup: AgeGroupDto?): String =
+private fun scopeLabel(type: LeaderFilters.Chip?, ageGroup: AgeGroupDto?): String =
     listOfNotNull("Top scorers", type?.name, ageGroup?.name ?: "all ages").joinToString(" · ")
 
 @Composable
@@ -172,7 +172,7 @@ private fun ChipRow(content: @Composable () -> Unit) {
 private fun ColumnScope.LeaderboardBody(
     entries: List<LeaderboardEntry>?,
     error: String?,
-    type: MatchTypeDto?,
+    type: LeaderFilters.Chip?,
     ageGroup: AgeGroupDto?,
 ) {
     when {
