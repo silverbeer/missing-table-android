@@ -42,6 +42,7 @@ import com.missingtable.scorer.data.api.MatchTypeDto
 import com.missingtable.scorer.data.api.StandingRow
 import com.missingtable.scorer.data.api.TableCoverage
 import com.missingtable.scorer.domain.TableCompetitions
+import kotlinx.coroutines.CancellationException
 import com.missingtable.scorer.domain.Leagues
 import com.missingtable.scorer.domain.Seasons
 import com.missingtable.scorer.ui.team.teamSubtitle
@@ -83,6 +84,9 @@ fun TableScreen(
     // Conferences for the competition; null until read (or when the read
     // failed, which falls back to the division's static list).
     var conferences by remember { mutableStateOf<List<DivisionDto>?>(null) }
+    // What stage 1 last settled, and what stage 2 last settled — see below.
+    var competitionScope by remember { mutableStateOf<TableScope?>(null) }
+    var tableKey by remember { mutableStateOf<TableKey?>(null) }
 
     var standings by remember { mutableStateOf<List<StandingRow>?>(null) }
     var coverage by remember { mutableStateOf<TableCoverage?>(null) }
@@ -111,59 +115,84 @@ fun TableScreen(
         runCatching { container.api.divisions() }.onSuccess { allDivisions = it }
     }
 
-    // Division, season or age group → which competitions are played. Homegrown
-    // at U15 is League and Flex; at U13 League alone, so no row shows. A
-    // choice this selection doesn't play falls back to the division's own.
+    // One pipeline, each stage keyed only on what the stage before it settled
+    // (SB-1596): competitions → conferences → table. Keyed on the raw
+    // selections instead, every stage raced the one before it — a table asked
+    // for with the new competition and the old competition's conference, a
+    // conference list asked for with the old competition.
+
+    // 1. Division, season or age group → which competitions are played.
+    // Homegrown at U15 is League and Flex; at U13 League alone, so no row
+    // shows. A choice this selection doesn't play falls back to the division's
+    // own.
     LaunchedEffect(selectedLeague, selectedSeason, selectedAgeGroup) {
         val league = selectedLeague ?: return@LaunchedEffect
         val season = selectedSeason ?: return@LaunchedEffect
         val ageGroup = selectedAgeGroup ?: return@LaunchedEffect
-        val list = runCatching {
+        val list = try {
             container.api.availableMatchTypes(seasonId = season, ageGroupId = ageGroup, leagueId = league)
-        }.getOrDefault(emptyList())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
         competitions = list
         selectedCompetition = TableCompetitions.resolve(list, selectedCompetition)
+        competitionScope = TableScope(league, season, ageGroup)
     }
 
-    // Competition → its conferences (Flex has its own). Keep the current one
-    // when still offered, else Northeast, else the first. A failed read falls
-    // back to the division's static list, as before SB-1596.
-    LaunchedEffect(selectedLeague, selectedSeason, selectedAgeGroup, selectedCompetition, allDivisions) {
-        val league = selectedLeague ?: return@LaunchedEffect
+    // 2. Competition → its conferences (Flex has its own). Keep the current
+    // one when still offered, else Northeast, else the first. A failed read
+    // falls back to the division's static list, as before SB-1596.
+    LaunchedEffect(competitionScope, selectedCompetition) {
+        val scope = competitionScope ?: return@LaunchedEffect
         val competition = selectedCompetition ?: return@LaunchedEffect
-        val read = runCatching {
+        val read = try {
             container.api.availableDivisions(
-                leagueId = league,
-                seasonId = selectedSeason,
-                ageGroupId = selectedAgeGroup,
+                leagueId = scope.league,
+                seasonId = scope.season,
+                ageGroupId = scope.ageGroup,
                 matchType = TableCompetitions.conferencesMatchType(competition),
             )
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
         conferences = read
-        val options = read ?: allDivisions.filter { it.leagueId == league }
-        selectedDivision = TableCompetitions.resolveConference(options.map { it.id to it.name }, selectedDivision)
+        val options = read ?: allDivisions.filter { it.leagueId == scope.league }
+        val division = TableCompetitions.resolveConference(options.map { it.id to it.name }, selectedDivision)
+        selectedDivision = division
+        if (division == null) {
+            // No conference has fixtures here: say so rather than keep the
+            // last selection's table on screen, or spin forever.
+            tableKey = null
+            standings = emptyList()
+            coverage = null
+            error = null
+        } else {
+            tableKey = TableKey(scope.season, scope.ageGroup, division, competition)
+        }
     }
 
-    LaunchedEffect(selectedSeason, selectedAgeGroup, selectedDivision, selectedCompetition) {
-        val season = selectedSeason ?: return@LaunchedEffect
-        val ageGroup = selectedAgeGroup ?: return@LaunchedEffect
-        val division = selectedDivision ?: return@LaunchedEffect
-        val competition = selectedCompetition ?: return@LaunchedEffect
+    // 3. The table. match_type is always sent: the API defaults to League, and
+    // a Flex conference asked for League renders an empty table (SB-835).
+    LaunchedEffect(tableKey) {
+        val key = tableKey ?: return@LaunchedEffect
         standings = null
         coverage = null
         error = null
-        runCatching {
-            // match_type always sent: the API defaults to League, and a Flex
-            // conference asked for League renders an empty table (SB-835).
-            container.api.table(
-                seasonId = season, ageGroupId = ageGroup, divisionId = division, matchType = competition,
+        try {
+            val response = container.api.table(
+                seasonId = key.season, ageGroupId = key.ageGroup, divisionId = key.division, matchType = key.competition,
             )
+            standings = response.standings
+            coverage = response.coverage
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = "Couldn't load the table"
         }
-            .onSuccess {
-                standings = it.standings
-                coverage = it.coverage
-            }
-            .onFailure { error = "Couldn't load the table" }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
@@ -207,7 +236,10 @@ fun TableScreen(
                     options = divisionOptions.map { it.id to it.name },
                     selectedId = selectedDivision,
                     placeholder = "Division",
-                    onSelect = { selectedDivision = it },
+                    onSelect = {
+                        selectedDivision = it
+                        tableKey = tableKey?.copy(division = it)
+                    },
                 )
             }
         }
@@ -272,6 +304,10 @@ fun TableScreen(
         }
     }
 }
+
+private data class TableScope(val league: Int, val season: Int, val ageGroup: Int)
+
+private data class TableKey(val season: Int, val ageGroup: Int, val division: Int, val competition: String)
 
 @Composable
 private fun ChipRow(

@@ -35,7 +35,9 @@ object TableCompetitions {
     }
 
     fun chips(available: List<MatchTypeDto>): List<Chip> {
-        val present = available.filter { it.hasStandings != false }
+        // display_order, as Leaders and Matches do: League before Flex however
+        // the API happened to order them.
+        val present = withStandings(available)
         val chips = present.map { Chip(it.name, it.name) }.toMutableList()
         val qualifying = present.filter { it.countsForQualification }
         if (qualifying.size > 1) {
@@ -46,11 +48,21 @@ object TableCompetitions {
         return chips
     }
 
-    /** The competition a division opens on: its own, else the first, else League. */
-    fun default(available: List<MatchTypeDto>): String =
-        available.firstOrNull { it.inDivision > 0 }?.name
-            ?: available.firstOrNull()?.name
+    /**
+     * The competition a division opens on: its own (`in_division`), else
+     * League, else the first. Only ones with a table — a Friendly with
+     * fixtures filed before any League match must not be the default.
+     */
+    fun default(available: List<MatchTypeDto>): String {
+        val tables = withStandings(available)
+        return tables.firstOrNull { it.inDivision > 0 }?.name
+            ?: tables.firstOrNull { it.name == "League" }?.name
+            ?: tables.firstOrNull()?.name
             ?: "League"
+    }
+
+    private fun withStandings(available: List<MatchTypeDto>) =
+        available.filter { it.hasStandings != false }.sortedBy { it.displayOrder ?: Int.MAX_VALUE }
 
     /**
      * Keep [current] while this division still offers it; otherwise its own
@@ -103,7 +115,6 @@ object TableCompetitions {
         val outside = c.matchesVsOutsideTable
         if (!combined && outside == 0) return ""
 
-        val names = competitions.joinToString(" + ").ifEmpty { "all competitions" }
         val parts = mutableListOf<String>()
         val contributions = competitions
             .filter { it in c.countedByCompetition }
@@ -114,8 +125,10 @@ object TableCompetitions {
             parts += "includes $outside ${if (outside == 1) "match" else "matches"} against " +
                 "$teams ${if (teams == 1) "team" else "teams"} outside this table"
         }
-        val suffix = if (combined) " A record, not a standing." else ""
-        return "$names combined — ${parts.joinToString("; ")}.$suffix"
+        if (parts.isEmpty()) return ""
+        if (!combined) return parts.joinToString("; ").replaceFirstChar { it.uppercase() } + "."
+        val names = competitions.joinToString(" + ").ifEmpty { "All competitions" }
+        return "$names combined — ${parts.joinToString("; ")}. A record, not a standing."
     }
 
     /** Instead of an empty table: fixtures exist and none are played, or there are none. */

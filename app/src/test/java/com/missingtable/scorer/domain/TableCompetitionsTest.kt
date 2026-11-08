@@ -96,7 +96,7 @@ class TableCompetitionsTest {
     fun `single competition with outside matches notes them, otherwise nothing`() {
         assertEquals("", TableCompetitions.coverageNote(TableCoverage(competitions = listOf("League"))))
         assertEquals(
-            "League combined — includes 2 matches against 1 team outside this table.",
+            "Includes 2 matches against 1 team outside this table.",
             TableCompetitions.coverageNote(
                 TableCoverage(competitions = listOf("League"), matchesVsOutsideTable = 2, teamsOutsideTable = 1),
             ),
@@ -107,5 +107,22 @@ class TableCompetitionsTest {
     fun `empty table says whether fixtures exist`() {
         assertEquals("3 fixtures scheduled, none played yet.", TableCompetitions.emptyNote(TableCoverage(fixtures = 3)))
         assertEquals("No completed matches yet", TableCompetitions.emptyNote(null))
+    }
+
+    @Test
+    fun `chips follow display order, not response order`() {
+        assertEquals(listOf("League", "Flex", "League + Flex"), TableCompetitions.chips(listOf(flex, league)).map { it.label })
+    }
+
+    @Test
+    fun `default never lands on a competition without a table`() {
+        val leagueEmpty = league.copy(inDivision = 0)
+        val friendlyFiled = MatchTypeDto(4, "Friendly", 4, hasStandings = false, inDivision = 3)
+        assertEquals("League", TableCompetitions.default(listOf(friendlyFiled, flex, leagueEmpty)))
+    }
+
+    @Test
+    fun `combined view with nothing counted says nothing`() {
+        assertEquals("", TableCompetitions.coverageNote(TableCoverage(competitions = emptyList())))
     }
 }
