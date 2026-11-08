@@ -85,6 +85,7 @@ import com.missingtable.scorer.data.api.RosterPlayer
 import com.missingtable.scorer.data.api.SubstitutionRequest
 import com.missingtable.scorer.data.auth.Session
 import com.missingtable.scorer.data.db.PendingAction
+import com.missingtable.scorer.domain.skipsWhenFailed
 import com.missingtable.scorer.ui.common.StartMatchDialog
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.ui.theme.StatusColors
@@ -237,8 +238,10 @@ fun LiveScreen(
     }
 
     // The starting XI per team: a queued save (newest wins) over the server's.
+    // Not a rejected one (SB-1592): it is stepped over, so the server never has
+    // it, and subs built on it would be rejected in turn.
     fun startingXi(teamId: Int): LineupResponse? =
-        queuedLineups.lastOrNull { it.teamId == teamId }
+        queuedLineups.lastOrNull { it.teamId == teamId && it.status != PendingAction.Status.FAILED }
             ?.let { runCatching { container.json.decodeFromString<LineupSaveRequest>(it.payloadJson) }.getOrNull() }
             ?.let { LineupResponse(matchId = matchId, teamId = teamId, formationName = it.formationName, positions = it.positions) }
             ?.takeIf { it.positions.isNotEmpty() }
@@ -412,16 +415,20 @@ fun LiveScreen(
                 },
                 actions = {
                     if (readOnly) return@TopAppBar
-                    if (pending.isNotEmpty()) {
+                    // A rejected lineup is stepped over (SB-1592) and named in
+                    // the app-wide banner; counting it here would leave a red
+                    // badge up all match while every goal syncs.
+                    val unsent = pending.filterNot { it.status == PendingAction.Status.FAILED && it.skipsWhenFailed() }
+                    if (unsent.isNotEmpty()) {
                         // A bare count is unactionable at a pitch — the head's
                         // last error and attempt count are what distinguish
                         // "syncing" from "stuck" (SB-779).
-                        val head = pending.firstOrNull()
+                        val head = unsent.firstOrNull()
                         val why = head?.lastError?.let { err ->
                             " · $err" + (head.attemptCount.takeIf { it > 1 }?.let { " ×$it" } ?: "")
                         } ?: ""
                         Text(
-                            "${pending.size} pending$why",
+                            "${unsent.size} pending$why",
                             style = MaterialTheme.typography.labelMedium,
                             color = if (head?.lastError != null) {
                                 MaterialTheme.colorScheme.error
@@ -504,62 +511,9 @@ fun LiveScreen(
                 .imePadding()
                 .padding(horizontal = 12.dp),
         ) {
-            // A rejected (4xx) action pauses the whole queue — strict FIFO —
-            // so it must be resolved before anything else syncs.
-            // Stalled on transient errors: no FAILED row, so no banner, and the
-            // engine may be deep in a 60s backoff with nothing to wake it
-            // (SB-779). Give the user a way to force a drain.
-            val stalled = pending.firstOrNull()?.takeIf {
-                it.status != PendingAction.Status.FAILED && it.lastError != null
-            }
-            if (!readOnly && stalled != null) {
-                Card(
-                    colors = androidx.compose.material3.CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text(
-                            "Not synced yet: ${stalled.actionType} — ${stalled.lastError}" +
-                                " (${stalled.attemptCount} attempts)",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        TextButton(onClick = { container.syncEngine.kick() }) { Text("Retry now") }
-                    }
-                }
-            }
-
-            val failedAction = pending.firstOrNull { it.status == PendingAction.Status.FAILED }
-            if (!readOnly && failedAction != null) {
-                Card(
-                    colors = androidx.compose.material3.CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text(
-                            "Sync blocked: ${failedAction.actionType} rejected" +
-                                (failedAction.lastError?.let { " ($it)" } ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Row {
-                            TextButton(onClick = {
-                                scope.launch { repo.retryFailed(failedAction.id) }
-                            }) { Text("Retry") }
-                            TextButton(onClick = {
-                                scope.launch { repo.discardFailed(failedAction.id) }
-                            }) { Text("Discard") }
-                        }
-                    }
-                }
-            }
+            // Sync trouble (rejected, retrying, unsent) shows in the app-wide
+            // banner above every screen (SB-1592), not here: a stuck row from
+            // another match blocks this one too, and was invisible here.
 
             // Scoreboard
             Row(

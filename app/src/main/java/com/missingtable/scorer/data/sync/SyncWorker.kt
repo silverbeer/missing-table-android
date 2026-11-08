@@ -21,7 +21,17 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         val engine = (applicationContext as MtApp).container.syncEngine
-        return when (engine.drain()) {
+        // A throw here would fail the job for good; this fallback is the only
+        // sync path for a backgrounded app, so retry instead (SB-1592).
+        val result = try {
+            engine.drain()
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("MtSync", "worker drain failed: ${e.javaClass.simpleName}: ${e.message}")
+            return Result.retry()
+        }
+        return when (result) {
             SyncEngine.DrainResult.EMPTY -> Result.success()
             // PAUSED needs user input — retrying won't help until they act.
             SyncEngine.DrainResult.PAUSED -> Result.success()

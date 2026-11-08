@@ -15,6 +15,14 @@ interface PendingActionDao {
     @Query("SELECT * FROM pending_actions ORDER BY id LIMIT 1")
     suspend fun head(): PendingAction?
 
+    /** The whole queue in order. Small: rows leave as soon as the server has them. */
+    @Query("SELECT * FROM pending_actions ORDER BY id")
+    suspend fun all(): List<PendingAction>
+
+    /** Every unsent row, all matches — the app-wide sync banner (SB-1592). */
+    @Query("SELECT * FROM pending_actions ORDER BY id")
+    fun observeAll(): Flow<List<PendingAction>>
+
     @Query("SELECT * FROM pending_actions WHERE id = :id")
     suspend fun byId(id: Long): PendingAction?
 

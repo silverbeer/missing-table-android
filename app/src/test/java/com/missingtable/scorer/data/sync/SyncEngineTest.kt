@@ -5,6 +5,8 @@ import androidx.room.Room
 import com.missingtable.scorer.data.api.CardRequest
 import com.missingtable.scorer.data.api.ClockRequest
 import com.missingtable.scorer.data.api.GoalRequest
+import com.missingtable.scorer.data.api.LineupPosition
+import com.missingtable.scorer.data.api.LineupSaveRequest
 import com.missingtable.scorer.data.api.MessageRequest
 import com.missingtable.scorer.data.api.MtApi
 import com.missingtable.scorer.data.api.SubstitutionRequest
@@ -309,5 +311,116 @@ class SyncEngineTest {
         assertTrue(body.contains("\"message\":\"What a strike\""))
         assertTrue(body.contains("\"client_event_id\":\"m1\""))
         assertNull(dao.head())
+    }
+
+    private fun lineupRow(clientEventId: String, matchId: Int = 7, teamId: Int? = 3) = PendingAction(
+        clientEventId = clientEventId,
+        matchId = matchId,
+        actionType = PendingAction.ActionType.LINEUP_SAVE,
+        payloadJson = json.encodeToString(LineupSaveRequest("4-3-3", listOf(LineupPosition(10, "GK")))),
+        teamId = teamId,
+        createdAt = 1L,
+    )
+
+    // SB-1592: a lineup the server rejects must not hold the match's scoring behind it.
+    @Test
+    fun `a rejected lineup save is stepped over and scoring still syncs`() = runBlocking {
+        responseQueue.add(422)
+        dao.insert(lineupRow("l1"))
+        dao.insert(goalRow("g1"))
+        dao.insert(goalRow("g2"))
+
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+
+        assertEquals(
+            listOf("/api/matches/7/lineup/3", "/api/matches/7/live/goal", "/api/matches/7/live/goal"),
+            received.map { it.path },
+        )
+        // The lineup stays, FAILED, for the banner's Retry / Discard.
+        val left = dao.head()!!
+        assertEquals(PendingAction.ActionType.LINEUP_SAVE, left.actionType)
+        assertEquals(PendingAction.Status.FAILED, left.status)
+        assertEquals("HTTP 422", left.lastError)
+
+        // A later drain does not resend it.
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+        assertEquals(3, received.size)
+    }
+
+    @Test
+    fun `retrying a rejected lineup sends it again`() = runBlocking {
+        responseQueue.add(422)
+        dao.insert(lineupRow("l1"))
+        engine.drain()
+
+        engine.retryFailed(dao.head()!!.id)
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+        assertEquals(2, received.size)
+        assertNull(dao.head())
+    }
+
+    @Test
+    fun `a rejected goal behind a rejected lineup still pauses the queue`() = runBlocking {
+        responseQueue.addAll(listOf(422, 422))
+        dao.insert(lineupRow("l1"))
+        dao.insert(goalRow("g1"))
+        dao.insert(goalRow("g2"))
+
+        assertEquals(SyncEngine.DrainResult.PAUSED, engine.drain())
+        assertEquals(2, received.size)
+    }
+
+    // SB-1592: a row the build can't even encode used to throw out of drain()
+    // and end the engine's loop, so nothing after it ever synced.
+    @Test
+    fun `an unsendable row fails like a 4xx instead of throwing`() = runBlocking {
+        dao.insert(goalRow("g1").copy(payloadJson = "not json"))
+        dao.insert(goalRow("g2"))
+
+        assertEquals(SyncEngine.DrainResult.PAUSED, engine.drain())
+        val head = dao.head()!!
+        assertEquals(PendingAction.Status.FAILED, head.status)
+        assertTrue(head.lastError!!.startsWith("Can't send"))
+        assertEquals(0, received.size)
+
+        engine.discardFailed(head.id)
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+        assertEquals(1, received.size)
+    }
+
+    @Test
+    fun `a lineup with no team id is stepped over, not thrown`() = runBlocking {
+        dao.insert(lineupRow("l1", teamId = null))
+        dao.insert(goalRow("g1"))
+
+        assertEquals(SyncEngine.DrainResult.EMPTY, engine.drain())
+        assertEquals(listOf("/api/matches/7/live/goal"), received.map { it.path })
+    }
+
+    @Test
+    fun `retry clears the old rejection`() = runBlocking {
+        responseQueue.add(422)
+        dao.insert(goalRow("g1"))
+        engine.drain()
+        engine.retryFailed(dao.head()!!.id)
+        assertNull(dao.head()!!.lastError)
+    }
+
+    // A captive portal answers 200 with HTML: the reply can't be read, but the
+    // request is safe to replay, so it must not pause the queue.
+    @Test
+    fun `an unreadable reply is transient, not a rejection`() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                received.add(request)
+                return MockResponse().setResponseCode(200).setBody("<html>sign in to wifi</html>")
+            }
+        }
+        dao.insert(goalRow("g1"))
+
+        assertEquals(SyncEngine.DrainResult.TRANSIENT_FAILURE, engine.drain())
+        val head = dao.head()!!
+        assertEquals(PendingAction.Status.PENDING, head.status)
+        assertTrue(head.lastError!!.startsWith("Bad reply"))
     }
 }

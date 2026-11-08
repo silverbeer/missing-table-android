@@ -5,6 +5,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.missingtable.scorer.domain.MatchDetail
@@ -48,6 +55,8 @@ import com.missingtable.scorer.ui.profile.ProfileScreen
 import com.missingtable.scorer.ui.table.TableScreen
 import com.missingtable.scorer.ui.tournaments.TournamentsScreen
 import com.missingtable.scorer.ui.team.TeamScreen
+import com.missingtable.scorer.ui.common.SyncStatusBanner
+import com.missingtable.scorer.ui.common.rememberSyncStatus
 import com.missingtable.scorer.ui.theme.MtTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -163,166 +172,190 @@ private fun AppNav(
         }
     }
 
-    NavHost(navController = navController, startDestination = startDestination) {
-        composable("login") {
-            LoginScreen(
+    // App-wide sync banner (SB-1592): any unsent or rejected action, from any
+    // match, on every screen. Insets: the banner takes the status bar, so the
+    // screen below must not pad for it again.
+    val syncStatus = rememberSyncStatus(container)
+    val backEntry by navController.currentBackStackEntryAsState()
+    val onLogin = backEntry?.destination?.route == "login"
+    Column(Modifier.fillMaxSize()) {
+        if (syncStatus != null) {
+            SyncStatusBanner(
                 container = container,
-                onLoggedIn = {
-                    navController.navigate("home") {
-                        popUpTo("login") { inclusive = true }
-                    }
+                status = syncStatus,
+                onOpenMatch = { id ->
+                    if (!onLogin) navController.navigate("match/$id") { launchSingleTop = true }
                 },
+                modifier = Modifier.statusBarsPadding(),
             )
         }
-        composable("home") {
-            HomeShell(
-                container = container,
-                // Every tap opens the match first (SB-1455): fans get the
-                // preview and result, and scoring is a button there for those
-                // the server says may manage this match.
-                onOpenMatch = { match -> navController.navigate("match/${match.id}") },
-                onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
-                onOpenNotificationPrefs = { navController.navigate("notification-prefs") },
-                onUpdateChecked = { forceUpdate.value = it },
-                onLogout = {
-                    scope.launch {
-                        // Device off the account while the DELETE can still
-                        // authenticate, then the tokens (SB-1464); bounded, so
-                        // logout never hangs on it.
-                        container.teardownSession(canCallServer = true)
-                        // The expiry watchdog may have got there first.
-                        if (navController.currentDestination?.route != "login") {
-                            navController.navigate("login") {
-                                popUpTo("home") { inclusive = true }
+        Box(
+            Modifier
+                .weight(1f)
+                .then(if (syncStatus != null) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)
+        ) {
+            NavHost(navController = navController, startDestination = startDestination) {
+                composable("login") {
+                    LoginScreen(
+                        container = container,
+                        onLoggedIn = {
+                            navController.navigate("home") {
+                                popUpTo("login") { inclusive = true }
                             }
-                        }
-                    }
-                },
-            )
-        }
-        composable("team/{teamId}?name={name}&subtitle={subtitle}") { entry ->
-            val teamId = entry.arguments?.getString("teamId")?.toIntOrNull() ?: return@composable
-            TeamScreen(
-                container = container,
-                teamId = teamId,
-                name = entry.arguments?.getString("name")?.takeIf { it.isNotBlank() },
-                subtitle = entry.arguments?.getString("subtitle")?.takeIf { it.isNotBlank() },
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable("notification-prefs") {
-            NotificationPrefsScreen(container = container, onBack = { navController.popBackStack() })
-        }
-        composable(
-            "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}&homeAgId={homeAgId}&awayAgId={awayAgId}"
-        ) { entry ->
-            val args = entry.arguments
-            val matchId = args?.getString("matchId")?.toIntOrNull() ?: return@composable
-            val homeId = args.getString("homeId")?.toIntOrNull() ?: return@composable
-            val awayId = args.getString("awayId")?.toIntOrNull() ?: return@composable
-            val seasonId = args.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
-            val ageGroupId = args.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
-            // A side playing up fields its own age group (SB-1444); else the match's.
-            val homeAgId = args.getString("homeAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
-            val awayAgId = args.getString("awayAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
-            com.missingtable.scorer.ui.lineup.LineupScreen(
-                container = container,
-                matchId = matchId,
-                homeTeamId = homeId,
-                homeTeamName = args.getString("homeName") ?: "Home",
-                awayTeamId = awayId,
-                awayTeamName = args.getString("awayName") ?: "Away",
-                seasonId = seasonId,
-                ageGroupName = args.getString("ageGroupName")?.takeIf { it.isNotBlank() },
-                ageGroupIds = mapOf(homeId to homeAgId, awayId to awayAgId),
-                alreadyStarted = args.getString("started") == "true",
-                onBack = { navController.popBackStack() },
-                onStartMatch = {
-                    // Arrived from the live screen (SB-677): go back to it
-                    // rather than stacking a second copy.
-                    if (args.getString("started") == "true") {
-                        navController.popBackStack()
-                    } else {
-                        navController.navigate(
-                            "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
-                        ) {
-                            popUpTo("matches")
-                        }
-                    }
-                },
-            )
-        }
-        composable("match/{matchId}") { entry ->
-            val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
-            com.missingtable.scorer.ui.match.MatchDetailScreen(
-                container = container,
-                matchId = matchId,
-                onBack = { navController.popBackStack() },
-                onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
-                onAction = { match, action ->
-                    val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
-                    when (action) {
-                        MatchDetail.Action.LINEUP_AND_KICKOFF -> {
-                            val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
-                                "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
-                                "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
-                            navController.navigate(
-                                "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common" +
-                                    "&homeAgId=${match.homeAgeGroupId ?: -1}&awayAgId=${match.awayAgeGroupId ?: -1}"
-                            )
-                        }
-                        MatchDetail.Action.SCORE_LIVE -> navController.navigate("live/${match.id}?$common")
-                        // The read-only live view (SB-318/320).
-                        MatchDetail.Action.WATCH_LIVE ->
-                            navController.navigate("live/${match.id}?readOnly=true&$common")
-                        // The post-match editor (SB-281).
-                        MatchDetail.Action.EDIT_RESULT -> navController.navigate("postmatch/${match.id}?$common")
-                    }
-                },
-            )
-        }
-        composable("postmatch/{matchId}?seasonId={seasonId}&ageGroupId={ageGroupId}") { entry ->
-            val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
-            val seasonId = entry.arguments?.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
-            val ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
-            com.missingtable.scorer.ui.postmatch.PostMatchScreen(
-                container = container,
-                matchId = matchId,
-                seasonId = seasonId,
-                onBack = { navController.popBackStack() },
-                onReopen = {
-                    navController.navigate(
-                        "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
-                    ) {
-                        popUpTo("home")
-                    }
-                },
-            )
-        }
-        composable("live/{matchId}?seasonId={seasonId}&ageGroupId={ageGroupId}&readOnly={readOnly}") { entry ->
-            val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
-            val seasonId = entry.arguments?.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
-            val ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
-            val readOnly = entry.arguments?.getString("readOnly") == "true"
-            LiveScreen(
-                container = container,
-                matchId = matchId,
-                seasonId = seasonId,
-                ageGroupId = ageGroupId,
-                onBack = { navController.popBackStack() },
-                onOpenLineup = { st ->
-                    // started=true so the lineup screen offers BACK TO MATCH
-                    // rather than a second kickoff (SB-677).
-                    val names = "homeName=${android.net.Uri.encode(st.homeTeamName)}" +
-                        "&awayName=${android.net.Uri.encode(st.awayTeamName)}" +
-                        "&ageGroupName=${android.net.Uri.encode(st.ageGroupName ?: "")}"
-                    navController.navigate(
-                        "lineup/$matchId?homeId=${st.homeTeamId}&awayId=${st.awayTeamId}&$names" +
-                            "&seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}&started=true"
+                        },
                     )
-                },
-                readOnly = readOnly,
-            )
+                }
+                composable("home") {
+                    HomeShell(
+                        container = container,
+                        // Every tap opens the match first (SB-1455): fans get the
+                        // preview and result, and scoring is a button there for those
+                        // the server says may manage this match.
+                        onOpenMatch = { match -> navController.navigate("match/${match.id}") },
+                        onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
+                        onOpenNotificationPrefs = { navController.navigate("notification-prefs") },
+                        onUpdateChecked = { forceUpdate.value = it },
+                        onLogout = {
+                            scope.launch {
+                                // Device off the account while the DELETE can still
+                                // authenticate, then the tokens (SB-1464); bounded, so
+                                // logout never hangs on it.
+                                container.teardownSession(canCallServer = true)
+                                // The expiry watchdog may have got there first.
+                                if (navController.currentDestination?.route != "login") {
+                                    navController.navigate("login") {
+                                        popUpTo("home") { inclusive = true }
+                                    }
+                                }
+                            }
+                        },
+                    )
+                }
+                composable("team/{teamId}?name={name}&subtitle={subtitle}") { entry ->
+                    val teamId = entry.arguments?.getString("teamId")?.toIntOrNull() ?: return@composable
+                    TeamScreen(
+                        container = container,
+                        teamId = teamId,
+                        name = entry.arguments?.getString("name")?.takeIf { it.isNotBlank() },
+                        subtitle = entry.arguments?.getString("subtitle")?.takeIf { it.isNotBlank() },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable("notification-prefs") {
+                    NotificationPrefsScreen(container = container, onBack = { navController.popBackStack() })
+                }
+                composable(
+                    "lineup/{matchId}?homeId={homeId}&awayId={awayId}&homeName={homeName}&awayName={awayName}&seasonId={seasonId}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}&started={started}&homeAgId={homeAgId}&awayAgId={awayAgId}"
+                ) { entry ->
+                    val args = entry.arguments
+                    val matchId = args?.getString("matchId")?.toIntOrNull() ?: return@composable
+                    val homeId = args.getString("homeId")?.toIntOrNull() ?: return@composable
+                    val awayId = args.getString("awayId")?.toIntOrNull() ?: return@composable
+                    val seasonId = args.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
+                    val ageGroupId = args.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+                    // A side playing up fields its own age group (SB-1444); else the match's.
+                    val homeAgId = args.getString("homeAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
+                    val awayAgId = args.getString("awayAgId")?.toIntOrNull().takeIf { it != -1 } ?: ageGroupId
+                    com.missingtable.scorer.ui.lineup.LineupScreen(
+                        container = container,
+                        matchId = matchId,
+                        homeTeamId = homeId,
+                        homeTeamName = args.getString("homeName") ?: "Home",
+                        awayTeamId = awayId,
+                        awayTeamName = args.getString("awayName") ?: "Away",
+                        seasonId = seasonId,
+                        ageGroupName = args.getString("ageGroupName")?.takeIf { it.isNotBlank() },
+                        ageGroupIds = mapOf(homeId to homeAgId, awayId to awayAgId),
+                        alreadyStarted = args.getString("started") == "true",
+                        onBack = { navController.popBackStack() },
+                        onStartMatch = {
+                            // Arrived from the live screen (SB-677): go back to it
+                            // rather than stacking a second copy.
+                            if (args.getString("started") == "true") {
+                                navController.popBackStack()
+                            } else {
+                                navController.navigate(
+                                    "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
+                                ) {
+                                    popUpTo("matches")
+                                }
+                            }
+                        },
+                    )
+                }
+                composable("match/{matchId}") { entry ->
+                    val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
+                    com.missingtable.scorer.ui.match.MatchDetailScreen(
+                        container = container,
+                        matchId = matchId,
+                        onBack = { navController.popBackStack() },
+                        onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
+                        onAction = { match, action ->
+                            val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
+                            when (action) {
+                                MatchDetail.Action.LINEUP_AND_KICKOFF -> {
+                                    val names = "homeName=${android.net.Uri.encode(match.homeTeamName)}" +
+                                        "&awayName=${android.net.Uri.encode(match.awayTeamName)}" +
+                                        "&ageGroupName=${android.net.Uri.encode(match.ageGroupName ?: "")}"
+                                    navController.navigate(
+                                        "lineup/${match.id}?homeId=${match.homeTeamId}&awayId=${match.awayTeamId}&$names&$common" +
+                                            "&homeAgId=${match.homeAgeGroupId ?: -1}&awayAgId=${match.awayAgeGroupId ?: -1}"
+                                    )
+                                }
+                                MatchDetail.Action.SCORE_LIVE -> navController.navigate("live/${match.id}?$common")
+                                // The read-only live view (SB-318/320).
+                                MatchDetail.Action.WATCH_LIVE ->
+                                    navController.navigate("live/${match.id}?readOnly=true&$common")
+                                // The post-match editor (SB-281).
+                                MatchDetail.Action.EDIT_RESULT -> navController.navigate("postmatch/${match.id}?$common")
+                            }
+                        },
+                    )
+                }
+                composable("postmatch/{matchId}?seasonId={seasonId}&ageGroupId={ageGroupId}") { entry ->
+                    val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
+                    val seasonId = entry.arguments?.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
+                    val ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+                    com.missingtable.scorer.ui.postmatch.PostMatchScreen(
+                        container = container,
+                        matchId = matchId,
+                        seasonId = seasonId,
+                        onBack = { navController.popBackStack() },
+                        onReopen = {
+                            navController.navigate(
+                                "live/$matchId?seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}"
+                            ) {
+                                popUpTo("home")
+                            }
+                        },
+                    )
+                }
+                composable("live/{matchId}?seasonId={seasonId}&ageGroupId={ageGroupId}&readOnly={readOnly}") { entry ->
+                    val matchId = entry.arguments?.getString("matchId")?.toIntOrNull() ?: return@composable
+                    val seasonId = entry.arguments?.getString("seasonId")?.toIntOrNull().takeIf { it != -1 }
+                    val ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull().takeIf { it != -1 }
+                    val readOnly = entry.arguments?.getString("readOnly") == "true"
+                    LiveScreen(
+                        container = container,
+                        matchId = matchId,
+                        seasonId = seasonId,
+                        ageGroupId = ageGroupId,
+                        onBack = { navController.popBackStack() },
+                        onOpenLineup = { st ->
+                            // started=true so the lineup screen offers BACK TO MATCH
+                            // rather than a second kickoff (SB-677).
+                            val names = "homeName=${android.net.Uri.encode(st.homeTeamName)}" +
+                                "&awayName=${android.net.Uri.encode(st.awayTeamName)}" +
+                                "&ageGroupName=${android.net.Uri.encode(st.ageGroupName ?: "")}"
+                            navController.navigate(
+                                "lineup/$matchId?homeId=${st.homeTeamId}&awayId=${st.awayTeamId}&$names" +
+                                    "&seasonId=${seasonId ?: -1}&ageGroupId=${ageGroupId ?: -1}&started=true"
+                            )
+                        },
+                        readOnly = readOnly,
+                    )
+                }
+            }
         }
     }
 }

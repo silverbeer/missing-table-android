@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.lineup
 
+import com.missingtable.scorer.data.db.PendingAction
 import com.missingtable.scorer.data.api.getLineup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -129,6 +130,26 @@ private enum class LineupTab { STARTING, NOW }
 
 /** Autosave status line (SB-1504): no Save button, so say where things stand. */
 private enum class SaveState { SAVED, SAVING, UNSAVED }
+
+internal data class SaveLabel(val text: String, val isError: Boolean)
+
+/**
+ * The lineup's save line (SB-1592). Before, "Saved ✓" meant only that the
+ * save was queued; a lineup the server never got still read as saved.
+ */
+internal fun lineupSaveLabel(
+    unsaved: Boolean,
+    saving: Boolean,
+    problem: String?,
+    queued: PendingAction?,
+): SaveLabel = when {
+    unsaved -> SaveLabel(problem ?: "Not saved", isError = true)
+    saving -> SaveLabel("Saving…", isError = false)
+    queued?.status == PendingAction.Status.FAILED ->
+        SaveLabel("Not saved — server rejected it${queued.lastError?.let { " ($it)" } ?: ""}", isError = true)
+    queued != null -> SaveLabel("Queued — not on the server yet", isError = false)
+    else -> SaveLabel("Saved ✓", isError = false)
+}
 
 private const val NUMBERS_NEED_SIGNAL = "New shirt numbers need signal to save"
 private const val LOAD_FAILED = "Couldn't load the saved lineup"
@@ -1099,14 +1120,21 @@ fun LineupScreen(
                         style = MaterialTheme.typography.labelMedium,
                     )
                     // Autosave status (SB-1504) — there is no Save button.
+                    // "Saved ✓" only once the server has it (SB-1592): a save
+                    // still in the queue is "Queued", a rejected one an error.
+                    val queuedSave = pending.lastOrNull {
+                        it.actionType == PendingAction.ActionType.LINEUP_SAVE && it.teamId == teamId
+                    }
+                    val label = lineupSaveLabel(
+                        unsaved = saveState == SaveState.UNSAVED,
+                        saving = saveState == SaveState.SAVING || dirty,
+                        problem = saveProblem,
+                        queued = queuedSave,
+                    )
                     Text(
-                        when {
-                            saveState == SaveState.UNSAVED -> saveProblem ?: "Not saved"
-                            saveState == SaveState.SAVING || dirty -> "Saving…"
-                            else -> "Saved ✓"
-                        },
+                        label.text,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (saveState == SaveState.UNSAVED) {
+                        color = if (label.isError) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
