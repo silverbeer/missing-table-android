@@ -1,5 +1,6 @@
 package com.missingtable.scorer.ui.table
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.AgeGroupDto
@@ -45,6 +47,7 @@ import com.missingtable.scorer.domain.TableCompetitions
 import kotlinx.coroutines.CancellationException
 import com.missingtable.scorer.domain.Leagues
 import com.missingtable.scorer.domain.Seasons
+import com.missingtable.scorer.domain.StandingsFormat
 import com.missingtable.scorer.ui.team.teamSubtitle
 
 /**
@@ -277,7 +280,10 @@ fun TableScreen(
                 Text(TableCompetitions.emptyNote(coverage), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> {
-                HeaderRow()
+                // One scroll state for the header and every row, so the stat
+                // columns move together and stay aligned (SB-1623).
+                val statsScroll = rememberScrollState()
+                HeaderRow(statsScroll)
                 HorizontalDivider()
                 val numbered = rows.withIndex().toList()
                 LazyColumn(Modifier.fillMaxSize()) {
@@ -288,7 +294,7 @@ fun TableScreen(
                         numbered,
                         key = { (idx, row) -> row.teamId?.let { "team-$it" } ?: "row-$idx" },
                     ) { (idx, row) ->
-                        StandingLine(position = idx + 1, row = row) { teamId ->
+                        StandingLine(position = idx + 1, row = row, statsScroll = statsScroll) { teamId ->
                             val sub = teamSubtitle(
                                 row.team,
                                 null,
@@ -358,22 +364,60 @@ private fun PickerDropdown(
     }
 }
 
+// Pinned on the left; the stat columns scroll horizontally beside them.
+private val PositionWidth = 28.dp
+private val TeamWidth = 132.dp
+
+/**
+ * One stat column (SB-1623). Same order as the web: GP, Pts and PPM first so
+ * a phone shows why a team ranks where it does (9 pts from 4 = 2.25 sits
+ * above 11 from 5 = 2.20) without scrolling. PPM is the ranking column.
+ */
+private class StatColumn(
+    val label: String,
+    val width: Dp,
+    val weight: FontWeight = FontWeight.Normal,
+    val value: (StandingRow) -> String,
+)
+
+private val StatColumns = listOf(
+    StatColumn("GP", 32.dp) { "${it.played}" },
+    StatColumn("Pts", 34.dp, FontWeight.Bold) { "${it.points}" },
+    StatColumn("PPM", 44.dp, FontWeight.SemiBold) { StandingsFormat.perMatch(it.pointsPerMatch) },
+    StatColumn("W", 30.dp) { "${it.wins}" },
+    StatColumn("D", 30.dp) { "${it.draws}" },
+    StatColumn("L", 30.dp) { "${it.losses}" },
+    StatColumn("GF", 32.dp) { "${it.goalsFor}" },
+    StatColumn("GA", 32.dp) { "${it.goalsAgainst}" },
+    StatColumn("GD", 36.dp) { StandingsFormat.goalDifference(it.goalDifference) },
+    StatColumn("GD/M", 48.dp) { StandingsFormat.signedPerMatch(it.gdPerMatch) },
+    StatColumn("GF/M", 44.dp) { StandingsFormat.perMatch(it.gfPerMatch) },
+    StatColumn("GA/M", 44.dp) { StandingsFormat.perMatch(it.gaPerMatch) },
+)
+
 @Composable
-private fun HeaderRow() {
+private fun HeaderRow(statsScroll: ScrollState) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Cell("#", 28.dp, bold = true)
+        Cell("#", PositionWidth, FontWeight.Bold)
         Text(
             "Team",
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.width(TeamWidth).padding(end = 6.dp),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
         )
-        listOf("P", "W", "D", "L", "GD", "Pts").forEach { Cell(it, 30.dp, bold = true) }
+        Row(Modifier.weight(1f).horizontalScroll(statsScroll)) {
+            StatColumns.forEach { Cell(it.label, it.width, FontWeight.Bold) }
+        }
     }
 }
 
 @Composable
-private fun StandingLine(position: Int, row: StandingRow, onOpenTeam: (Int) -> Unit) {
+private fun StandingLine(
+    position: Int,
+    row: StandingRow,
+    statsScroll: ScrollState,
+    onOpenTeam: (Int) -> Unit,
+) {
     val teamId = row.teamId
     Row(
         Modifier
@@ -382,30 +426,28 @@ private fun StandingLine(position: Int, row: StandingRow, onOpenTeam: (Int) -> U
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Cell("$position", 28.dp)
+        Cell("$position", PositionWidth)
         Text(
             row.team,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.width(TeamWidth).padding(end = 6.dp),
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Cell("${row.played}", 30.dp)
-        Cell("${row.wins}", 30.dp)
-        Cell("${row.draws}", 30.dp)
-        Cell("${row.losses}", 30.dp)
-        Cell(if (row.goalDifference > 0) "+${row.goalDifference}" else "${row.goalDifference}", 30.dp)
-        Cell("${row.points}", 30.dp, bold = true)
+        Row(Modifier.weight(1f).horizontalScroll(statsScroll)) {
+            StatColumns.forEach { Cell(it.value(row), it.width, it.weight) }
+        }
     }
 }
 
 @Composable
-private fun Cell(text: String, width: androidx.compose.ui.unit.Dp, bold: Boolean = false) {
+private fun Cell(text: String, width: Dp, fontWeight: FontWeight = FontWeight.Normal) {
     Text(
         text,
         modifier = Modifier.width(width),
         style = MaterialTheme.typography.labelMedium,
-        fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        fontWeight = fontWeight,
         textAlign = TextAlign.Center,
+        maxLines = 1,
     )
 }

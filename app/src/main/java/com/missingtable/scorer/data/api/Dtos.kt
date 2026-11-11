@@ -291,6 +291,12 @@ data class StandingRow(
     // Last-5 results, e.g. ["W","D","L","W","W"]
     val form: List<String> = emptyList(),
     @SerialName("position_change") val positionChange: Int = 0,
+    // Per-match stats (SB-1623): MLS NEXT ranks by points per match. Null
+    // when played == 0, and absent on older backends.
+    @SerialName("points_per_match") val pointsPerMatch: Double? = null,
+    @SerialName("gd_per_match") val gdPerMatch: Double? = null,
+    @SerialName("gf_per_match") val gfPerMatch: Double? = null,
+    @SerialName("ga_per_match") val gaPerMatch: Double? = null,
 )
 
 @Serializable
