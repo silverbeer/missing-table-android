@@ -40,7 +40,11 @@ import com.missingtable.scorer.data.api.PlayerStatsResponse
 import com.missingtable.scorer.data.auth.Session
 import com.missingtable.scorer.ui.common.openNotificationSettings
 import com.missingtable.scorer.ui.common.rememberNotificationsEnabled
+import com.missingtable.scorer.data.push.FollowKey
+import com.missingtable.scorer.data.push.key
 import com.missingtable.scorer.ui.team.FOLLOW_FAILED
+import com.missingtable.scorer.ui.team.TeamLink
+import com.missingtable.scorer.ui.team.scopeLabel
 import com.missingtable.scorer.ui.team.subtitle
 import kotlinx.coroutines.launch
 
@@ -53,7 +57,7 @@ import kotlinx.coroutines.launch
 fun ProfileScreen(
     container: AppContainer,
     onLogout: () -> Unit,
-    onOpenTeam: (Int, String, String?) -> Unit = { _, _, _ -> },
+    onOpenTeam: (TeamLink) -> Unit = {},
     onOpenNotificationPrefs: () -> Unit = {},
 ) {
     val session by container.tokenStore.sessionFlow.collectAsState(initial = Session())
@@ -62,8 +66,8 @@ fun ProfileScreen(
     val notificationsOn = rememberNotificationsEnabled()
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    // Teams with an Unfollow in flight: one request per row.
-    var unfollowing by remember { mutableStateOf(emptySet<Int>()) }
+    // Follows with an Unfollow in flight: one request per row.
+    var unfollowing by remember { mutableStateOf(emptySet<FollowKey>()) }
 
     LaunchedEffect(Unit) { container.teamFollows.refresh() }
 
@@ -159,14 +163,21 @@ fun ProfileScreen(
             follows.forEach { f ->
                 val name = f.team?.name ?: "Team ${f.teamId}"
                 val sub = f.team?.subtitle()
+                // Which age groups this follow alerts for (SB-1645).
+                val followScope = f.scopeLabel()
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { onOpenTeam(f.teamId, name, sub) },
+                        .clickable { onOpenTeam(TeamLink(f.teamId, name, sub, f.ageGroupId, f.ageGroup?.name)) },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            followScope,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                         sub?.let {
                             Text(
                                 it,
@@ -176,13 +187,13 @@ fun ProfileScreen(
                         }
                     }
                     TextButton(
-                        enabled = f.teamId !in unfollowing,
+                        enabled = f.key !in unfollowing,
                         onClick = {
-                            val id = f.teamId
-                            unfollowing = unfollowing + id
+                            val k = f.key
+                            unfollowing = unfollowing + k
                             scope.launch {
-                                val ok = container.teamFollows.setFollowing(id, false)
-                                unfollowing = unfollowing - id
+                                val ok = container.teamFollows.setFollowing(k.teamId, false, k.ageGroupId)
+                                unfollowing = unfollowing - k
                                 if (!ok) {
                                     android.widget.Toast
                                         .makeText(context, FOLLOW_FAILED, android.widget.Toast.LENGTH_SHORT)

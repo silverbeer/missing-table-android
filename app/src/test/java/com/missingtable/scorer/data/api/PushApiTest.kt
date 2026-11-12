@@ -157,6 +157,38 @@ class PushApiTest {
         assertTrue(resp.isSuccessful)
     }
 
+    @Test
+    fun `followTeam with an age group POSTs a squad follow (SB-1645)`() = runBlocking {
+        enqueue(201, """{"team_id": 7, "age_group_id": 3, "following": true}""")
+        api.followTeam(TeamFollowRequest(7, ageGroupId = 3))
+
+        val body = taken().jsonBody()
+        assertEquals(setOf("team_id", "age_group_id"), body.keys)
+        assertEquals(3, body.getValue("age_group_id").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `unfollowTeam with an age group sends it as a query (SB-1645)`() = runBlocking {
+        enqueue(204)
+        api.unfollowTeam(7, ageGroupId = 3)
+
+        assertEquals("/api/users/me/team-follows/7?age_group_id=3", taken().path)
+    }
+
+    @Test
+    fun `teamFollows reads each follow's age group (SB-1645)`() = runBlocking {
+        enqueue(
+            body = """{"follows": [
+                {"team_id": 7, "age_group_id": null, "age_group": null},
+                {"team_id": 8, "age_group_id": 3, "age_group": {"id": 3, "name": "U14"}}
+            ]}""",
+        )
+        val follows = api.teamFollows().follows
+
+        assertEquals(listOf(null, 3), follows.map { it.ageGroupId })
+        assertEquals("U14", follows[1].ageGroup?.name)
+    }
+
     // ── notification-preferences ─────────────────────────────────────────────
 
     @Test

@@ -45,6 +45,7 @@ import com.missingtable.scorer.domain.MotwCopy
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.ui.preview.MatchPreviewSection
 import com.missingtable.scorer.ui.team.FollowButton
+import com.missingtable.scorer.ui.team.TeamLink
 import com.missingtable.scorer.ui.team.teamSubtitle
 import java.time.Instant
 
@@ -64,7 +65,7 @@ fun MatchDetailScreen(
     onBack: () -> Unit,
     onAction: (MatchSummary, MatchDetail.Action) -> Unit,
     // teamId, name, subtitle — the team screen has no endpoint of its own (SB-1464).
-    onOpenTeam: (Int, String, String?) -> Unit = { _, _, _ -> },
+    onOpenTeam: (TeamLink) -> Unit = {},
 ) {
     var match by remember { mutableStateOf<MatchSummary?>(null) }
     var events by remember { mutableStateOf<List<MatchEvent>>(emptyList()) }
@@ -132,10 +133,10 @@ fun MatchDetailScreen(
             // One per side, under that side's crest (SB-1464).
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    FollowButton(container, m.homeTeamId)
+                    FollowButton(container, m.homeTeamId, squadAgeGroupId(m, home = true))
                 }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    FollowButton(container, m.awayTeamId)
+                    FollowButton(container, m.awayTeamId, squadAgeGroupId(m, home = false))
                 }
             }
 
@@ -178,7 +179,7 @@ fun MatchDetailScreen(
 
 /** Crests and names either side of the score (or kickoff), status underneath. */
 @Composable
-private fun Header(m: MatchSummary, onOpenTeam: (Int, String, String?) -> Unit) {
+private fun Header(m: MatchSummary, onOpenTeam: (TeamLink) -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             Modifier.fillMaxWidth(),
@@ -190,7 +191,7 @@ private fun Header(m: MatchSummary, onOpenTeam: (Int, String, String?) -> Unit) 
                 m.homeTeamName,
                 Modifier
                     .weight(1f)
-                    .clickable { onOpenTeam(m.homeTeamId, m.homeTeamName, subtitle(m, m.homeTeamName, m.homeTeamClub?.name)) },
+                    .clickable { onOpenTeam(teamLink(m, home = true, subtitle(m, m.homeTeamName, m.homeTeamClub?.name))) },
             )
             Text(
                 if (MotwCopy.hasScore(m)) "${m.homeScore} – ${m.awayScore}" else "v",
@@ -203,7 +204,7 @@ private fun Header(m: MatchSummary, onOpenTeam: (Int, String, String?) -> Unit) 
                 m.awayTeamName,
                 Modifier
                     .weight(1f)
-                    .clickable { onOpenTeam(m.awayTeamId, m.awayTeamName, subtitle(m, m.awayTeamName, m.awayTeamClub?.name)) },
+                    .clickable { onOpenTeam(teamLink(m, home = false, subtitle(m, m.awayTeamName, m.awayTeamClub?.name))) },
             )
         }
         Text(
@@ -268,4 +269,24 @@ private fun icon(eventType: String): String = when (eventType) {
     "yellow_card" -> "🟨"
     "red_card" -> "🟥"
     else -> ""
+}
+
+/**
+ * The squad one side fielded (SB-1645): its own age group when it played up
+ * or down (SB-1444), else the match's. A Follow here follows that squad.
+ */
+internal fun squadAgeGroupId(m: MatchSummary, home: Boolean): Int? =
+    (if (home) m.homeAgeGroupId else m.awayAgeGroupId) ?: m.ageGroupId
+
+/** The team screen for one side, carrying the squad it fielded. */
+internal fun teamLink(m: MatchSummary, home: Boolean, subtitle: String?): TeamLink {
+    val ag = squadAgeGroupId(m, home)
+    return TeamLink(
+        teamId = if (home) m.homeTeamId else m.awayTeamId,
+        name = if (home) m.homeTeamName else m.awayTeamName,
+        subtitle = subtitle,
+        ageGroupId = ag,
+        // The match only names its own age group.
+        ageGroupName = m.ageGroupName.takeIf { ag == m.ageGroupId },
+    )
 }

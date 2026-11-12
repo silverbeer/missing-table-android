@@ -26,6 +26,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.missingtable.scorer.AppContainer
 import com.missingtable.scorer.data.api.FollowTeam
+import com.missingtable.scorer.data.api.TeamFollow
+import com.missingtable.scorer.data.push.FollowKey
+import com.missingtable.scorer.data.push.covers
+import com.missingtable.scorer.data.push.toggleTarget
 import com.missingtable.scorer.ui.common.rememberNotifPermissionGate
 import kotlinx.coroutines.launch
 
@@ -34,12 +38,22 @@ import kotlinx.coroutines.launch
  * shared follows cache, so every button for this team flips together; the
  * flip is optimistic and rolls back if the server refuses. The first follow
  * is where notification permission gets asked for.
+ *
+ * With [ageGroupId] the follow is for that squad only (SB-1645): following
+ * IFA from a U14 match alerts for IFA's U14 matches, not U13 or U15. Without
+ * one it follows every age group of the team. See [toggleTarget] for what
+ * Unfollow removes.
  */
 @Composable
-fun FollowButton(container: AppContainer, teamId: Int, modifier: Modifier = Modifier) {
-    val ids by container.teamFollows.ids.collectAsState()
+fun FollowButton(
+    container: AppContainer,
+    teamId: Int,
+    ageGroupId: Int? = null,
+    modifier: Modifier = Modifier,
+) {
+    val keys by container.teamFollows.keys.collectAsState()
     val loaded by container.teamFollows.loaded.collectAsState()
-    val following = teamId in ids
+    val following = keys.covers(teamId, ageGroupId)
     val gate = rememberNotifPermissionGate(container)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -49,8 +63,13 @@ fun FollowButton(container: AppContainer, teamId: Int, modifier: Modifier = Modi
         if (!busy) {
             busy = true
             val follow = !following
+            val target = if (follow) {
+                FollowKey(teamId, ageGroupId)
+            } else {
+                keys.toggleTarget(teamId, ageGroupId)
+            }
             scope.launch {
-                val ok = container.teamFollows.setFollowing(teamId, follow)
+                val ok = container.teamFollows.setFollowing(target.teamId, follow, target.ageGroupId)
                 busy = false
                 when {
                     !ok -> Toast.makeText(context, FOLLOW_FAILED, Toast.LENGTH_SHORT).show()
@@ -95,6 +114,28 @@ fun teamSubtitle(teamName: String?, clubName: String?, leagueName: String?, divi
         .ifEmpty { null }
 
 fun FollowTeam.subtitle(): String? = teamSubtitle(name, club?.name, division?.leagueName, division?.name)
+
+/** What a follow alerts for, on Profile: "U14 only" or "All age groups" (SB-1645). */
+fun followScopeLabel(ageGroupId: Int?, ageGroupName: String?): String = when {
+    ageGroupId == null -> "All age groups"
+    !ageGroupName.isNullOrBlank() -> "$ageGroupName only"
+    else -> "One age group"
+}
+
+fun TeamFollow.scopeLabel(): String = followScopeLabel(ageGroupId, ageGroup?.name)
+
+/**
+ * Where a team row leads (SB-1464). There is no team endpoint, so what the
+ * caller knows rides along; the age group is the squad the caller was showing,
+ * which is what that screen's Follow button follows (SB-1645).
+ */
+data class TeamLink(
+    val teamId: Int,
+    val name: String,
+    val subtitle: String? = null,
+    val ageGroupId: Int? = null,
+    val ageGroupName: String? = null,
+)
 
 /** Shown when a follow or unfollow is refused — here and on Profile's Unfollow. */
 const val FOLLOW_FAILED = "Couldn't update — try again"

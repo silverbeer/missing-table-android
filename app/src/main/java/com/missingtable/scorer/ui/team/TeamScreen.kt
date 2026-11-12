@@ -36,6 +36,8 @@ fun TeamScreen(
     name: String?,
     subtitle: String?,
     onBack: () -> Unit,
+    ageGroupId: Int? = null,
+    ageGroupName: String? = null,
 ) {
     val follows by container.teamFollows.follows.collectAsState()
     val embed = follows.firstOrNull { it.teamId == teamId }?.team
@@ -76,13 +78,20 @@ fun TeamScreen(
                     textAlign = TextAlign.Center,
                 )
             }
-            FollowButton(container, teamId)
+            FollowButton(container, teamId, ageGroupId)
             Text(
-                "Follow to get kickoff, goals and results for this team.",
+                followHint(ageGroupId, ageGroupName),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
         }
     }
+}
+
+/** Under the Follow button: says which age groups a follow here covers (SB-1645). */
+internal fun followHint(ageGroupId: Int?, ageGroupName: String?): String = when {
+    ageGroupId == null -> "Follow to get kickoff, goals and results for every age group of this team."
+    !ageGroupName.isNullOrBlank() -> "Follow to get kickoff, goals and results for this team's $ageGroupName matches."
+    else -> "Follow to get kickoff, goals and results for this age group of the team."
 }

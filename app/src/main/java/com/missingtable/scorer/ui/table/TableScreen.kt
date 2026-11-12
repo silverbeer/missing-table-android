@@ -48,6 +48,7 @@ import kotlinx.coroutines.CancellationException
 import com.missingtable.scorer.domain.Leagues
 import com.missingtable.scorer.domain.Seasons
 import com.missingtable.scorer.domain.StandingsFormat
+import com.missingtable.scorer.ui.team.TeamLink
 import com.missingtable.scorer.ui.team.teamSubtitle
 
 /**
@@ -67,8 +68,8 @@ import com.missingtable.scorer.ui.team.teamSubtitle
 @Composable
 fun TableScreen(
     container: AppContainer,
-    // teamId, name, subtitle — a row opens its team (SB-1464).
-    onOpenTeam: (Int, String, String?) -> Unit = { _, _, _ -> },
+    // A row opens its team at the table's age group (SB-1464, SB-1645).
+    onOpenTeam: (TeamLink) -> Unit = {},
 ) {
     var ageGroups by remember { mutableStateOf<List<AgeGroupDto>>(emptyList()) }
     var leagues by remember { mutableStateOf<List<LeagueDto>>(emptyList()) }
@@ -301,7 +302,15 @@ fun TableScreen(
                                 leagues.firstOrNull { it.id == selectedLeague }?.name,
                                 divisionOptions.firstOrNull { it.id == selectedDivision }?.name,
                             )
-                            onOpenTeam(teamId, row.team, sub)
+                            onOpenTeam(
+                                TeamLink(
+                                    teamId = teamId,
+                                    name = row.team,
+                                    subtitle = sub,
+                                    ageGroupId = selectedAgeGroup,
+                                    ageGroupName = ageGroups.firstOrNull { it.id == selectedAgeGroup }?.name,
+                                ),
+                            )
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
