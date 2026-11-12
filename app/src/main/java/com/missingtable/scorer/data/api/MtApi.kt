@@ -125,9 +125,17 @@ interface MtApi {
      * The featured match for a week (SB-1108). `week_start` is any date in the
      * week of interest — the server snaps it to that week's Monday — so the
      * Matches tab passes the Monday it is already showing.
+     *
+     * One pick per slot — (week, pool, age group) — since SB-1641. Naming an
+     * age group asks for that slot's pick; `pool` defaults to `main` on the
+     * server. With neither, `motw` is the week's first pick, as before.
      */
     @GET("api/motw")
-    suspend fun motw(@Query("week_start") weekStart: String? = null): MotwResponse
+    suspend fun motw(
+        @Query("week_start") weekStart: String? = null,
+        @Query("age_group_id") ageGroupId: Int? = null,
+        @Query("pool") pool: String? = null,
+    ): MotwResponse
 
     @GET("api/android/apk-url")
     suspend fun apkUrl(): ApkUrlResponse

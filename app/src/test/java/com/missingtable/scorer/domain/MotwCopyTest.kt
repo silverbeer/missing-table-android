@@ -1,6 +1,7 @@
 package com.missingtable.scorer.domain
 
 import com.missingtable.scorer.data.api.MatchSummary
+import com.missingtable.scorer.data.api.Motw
 import java.time.Instant
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
@@ -148,5 +149,13 @@ class MotwCopyTest {
         assertEquals("U15", MotwCopy.ageGroupLabel(match()))
         assertNull(MotwCopy.ageGroupLabel(match(ageGroup = "Unknown")))
         assertNull(MotwCopy.ageGroupLabel(match(ageGroup = null)))
+    }
+
+    @Test
+    fun `the title names the slot's age group, then the fixture's, then neither`() {
+        assertEquals("U16 Match of the Week", MotwCopy.title(Motw(match = match(), ageGroup = "U16")))
+        // Older server: no slot fields, so the fixture's age group stands in.
+        assertEquals("U15 Match of the Week", MotwCopy.title(Motw(match = match())))
+        assertEquals("Match of the Week", MotwCopy.title(Motw(match = match(ageGroup = "Unknown"))))
     }
 }

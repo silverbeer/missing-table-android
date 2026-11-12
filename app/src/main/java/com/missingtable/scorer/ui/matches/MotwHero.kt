@@ -35,8 +35,8 @@ import java.time.Instant
 /**
  * Match of the Week (SB-1108), the phone's answer to MotwHero.vue.
  *
- * Deliberately a strip and not a billboard. The pick crosses every age group,
- * so it is never the thing the person came to this tab for — it sits above
+ * Deliberately a strip and not a billboard. Even the selected age group's pick
+ * (SB-1641) is never the thing the person came to this tab for — it sits above
  * week navigation as one row and only opens when asked.
  *
  * Closed, it withholds the fixture on purpose: one pick a week is small
@@ -77,18 +77,15 @@ fun MotwHero(motw: Motw, onOpenMatch: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    // The age group rides in the heading, not just in the meta
+                    // line: under "All" ages the strip shows the week's first
+                    // pick, so a U16 pick teased there has to say so before
+                    // anyone opens it (SB-1641).
                     Text(
-                        "◆ MATCH OF THE WEEK",
+                        "◆ ${MotwCopy.title(motw).uppercase()}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                     )
-                    // The age group rides in the closed strip, not just in the
-                    // meta line: this banner renders under every age-group
-                    // filter — the pick is global — so a U16 fixture teased
-                    // under a U15 filter has to say so before anyone opens it.
-                    MotwCopy.ageGroupLabel(match)?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall)
-                    }
                     Text(
                         if (expanded) "▴" else "▾",
                         style = MaterialTheme.typography.labelSmall,
