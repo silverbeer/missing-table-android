@@ -563,7 +563,12 @@ data class FcmDeviceResponse(
 data class FcmDevicesResponse(val devices: List<FcmDeviceResponse> = emptyList())
 
 @Serializable
-data class TeamFollowRequest(@SerialName("team_id") val teamId: Int)
+data class TeamFollowRequest(
+    @SerialName("team_id") val teamId: Int,
+    // Null follows every age group of the team; a value follows that squad
+    // only (SB-1608, SB-1645).
+    @SerialName("age_group_id") val ageGroupId: Int? = null,
+)
 
 @Serializable
 data class TeamFollowResult(
@@ -577,6 +582,9 @@ data class TeamFollowsResponse(val follows: List<TeamFollow> = emptyList())
 @Serializable
 data class TeamFollow(
     @SerialName("team_id") val teamId: Int,
+    // Null is a whole-team follow (every age group); a value is one squad (SB-1645).
+    @SerialName("age_group_id") val ageGroupId: Int? = null,
+    @SerialName("age_group") val ageGroup: AgeGroupDto? = null,
     @SerialName("created_at") val createdAt: String? = null,
     val team: FollowTeam? = null,
 )

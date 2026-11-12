@@ -11,13 +11,53 @@ import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 
 /**
+ * One follow: a team, and the age group (squad) it is for. A null
+ * [ageGroupId] follows every age group of the team, which is what a follow
+ * meant before squads existed (SB-1608) and is still what a web follow of a
+ * whole club team makes (SB-1645).
+ */
+data class FollowKey(val teamId: Int, val ageGroupId: Int? = null) {
+    /**
+     * Whether unfollowing this key removes [other]: a whole-team unfollow
+     * takes every follow of the team, a squad unfollow only that squad.
+     */
+    fun removes(other: FollowKey): Boolean =
+        other.teamId == teamId && (ageGroupId == null || ageGroupId == other.ageGroupId)
+}
+
+/**
+ * Whether the user hears about [teamId] at [ageGroupId]. A whole-team follow
+ * covers every age group. With no age group known (null), any follow of the
+ * team counts, since there is no squad to tell them apart by.
+ */
+fun Set<FollowKey>.covers(teamId: Int, ageGroupId: Int?): Boolean = any {
+    it.teamId == teamId && (it.ageGroupId == null || ageGroupId == null || it.ageGroupId == ageGroupId)
+}
+
+/**
+ * What tapping Follow / Following for [teamId] at [ageGroupId] changes.
+ *
+ * Follow makes a squad follow when the age group is known, else a whole-team
+ * one. Unfollow removes the squad follow; but when the user is covered by a
+ * whole-team follow (or there is no age group to narrow it to), the button
+ * cannot take back one squad, so it removes every follow of the team.
+ */
+fun Set<FollowKey>.toggleTarget(teamId: Int, ageGroupId: Int?): FollowKey =
+    if (ageGroupId == null || FollowKey(teamId, null) in this) FollowKey(teamId, null)
+    else FollowKey(teamId, ageGroupId)
+
+val TeamFollow.key: FollowKey get() = FollowKey(teamId, ageGroupId)
+
+/**
  * The teams this user follows (SB-1464), shared by every Follow button so a
  * follow on Match Detail shows on the team screen and in Profile at once.
+ * Follows are per squad, [FollowKey] (SB-1645).
  *
- * [ids] is the server's set with every in-flight toggle laid over it, so a
+ * [keys] is the server's set with every in-flight toggle laid over it, so a
  * refresh landing mid-toggle cannot undo what the user just tapped; each
  * override drops when its own request settles, rolled back on failure.
- * [follows] carries the server's embed (club, division) for display.
+ * [ids] is the teams with any follow. [follows] carries the server's embed
+ * (club, division, age group) for display.
  *
  * [clear] starts a new generation: a response for the previous user that
  * arrives after logout is dropped rather than restoring their follows.
@@ -25,10 +65,13 @@ import retrofit2.HttpException
 class TeamFollows(private val api: MtApi) {
 
     private val lock = Any()
-    private var serverIds: Set<Int> = emptySet()
+    private var serverKeys: Set<FollowKey> = emptySet()
     private var serverFollows: List<TeamFollow> = emptyList()
-    private val pending = mutableMapOf<Int, Boolean>()
+    private val pending = mutableMapOf<FollowKey, Boolean>()
     private var generation = 0
+
+    private val _keys = MutableStateFlow<Set<FollowKey>>(emptySet())
+    val keys: StateFlow<Set<FollowKey>> = _keys.asStateFlow()
 
     private val _ids = MutableStateFlow<Set<Int>>(emptySet())
     val ids: StateFlow<Set<Int>> = _ids.asStateFlow()
@@ -43,9 +86,15 @@ class TeamFollows(private val api: MtApi) {
     private val loadMutex = Mutex()
 
     /** Caller holds [lock]. */
+    private fun removedByPending(k: FollowKey): Boolean =
+        pending.any { (p, follow) -> !follow && p.removes(k) }
+
+    /** Caller holds [lock]. */
     private fun publish() {
-        _ids.value = (serverIds + pending.filterValues { it }.keys) - pending.filterValues { !it }.keys
-        _follows.value = serverFollows.filter { pending[it.teamId] != false }
+        val keys = serverKeys.filterNot(::removedByPending).toSet() + pending.filterValues { it }.keys
+        _keys.value = keys
+        _ids.value = keys.mapTo(linkedSetOf()) { it.teamId }
+        _follows.value = serverFollows.filterNot { removedByPending(it.key) }
     }
 
     suspend fun refresh(): Boolean {
@@ -54,7 +103,7 @@ class TeamFollows(private val api: MtApi) {
         synchronized(lock) {
             if (gen != generation) return false
             serverFollows = resp.follows
-            serverIds = resp.follows.map { it.teamId }.toSet()
+            serverKeys = resp.follows.mapTo(linkedSetOf()) { it.key }
             _loaded.value = true
             publish()
         }
@@ -67,28 +116,36 @@ class TeamFollows(private val api: MtApi) {
         loadMutex.withLock { if (!_loaded.value) refresh() }
     }
 
-    /** Follow or unfollow; returns false (that team rolled back) on failure. */
-    suspend fun setFollowing(teamId: Int, follow: Boolean): Boolean {
+    /**
+     * Follow or unfollow [teamId] — one squad when [ageGroupId] is set, the
+     * whole team when null. Returns false (that change rolled back) on failure.
+     */
+    suspend fun setFollowing(teamId: Int, follow: Boolean, ageGroupId: Int? = null): Boolean {
+        val key = FollowKey(teamId, ageGroupId)
         val gen = synchronized(lock) {
-            pending[teamId] = follow
+            pending[key] = follow
             publish()
             generation
         }
         val ok = runCatching {
             if (follow) {
-                api.followTeam(TeamFollowRequest(teamId))
+                api.followTeam(TeamFollowRequest(teamId, ageGroupId))
             } else {
-                val resp = api.unfollowTeam(teamId)
+                val resp = api.unfollowTeam(teamId, ageGroupId)
                 if (!resp.isSuccessful) throw HttpException(resp)
             }
         }.isSuccess
         synchronized(lock) {
             if (gen != generation) return false
-            // Only this request's override: a later tap on the same team keeps its own.
-            if (pending[teamId] == follow) pending.remove(teamId)
+            // Only this request's override: a later tap on the same key keeps its own.
+            if (pending[key] == follow) pending.remove(key)
             if (ok) {
-                serverIds = if (follow) serverIds + teamId else serverIds - teamId
-                if (!follow) serverFollows = serverFollows.filterNot { it.teamId == teamId }
+                if (follow) {
+                    serverKeys = serverKeys + key
+                } else {
+                    serverKeys = serverKeys.filterNot { key.removes(it) }.toSet()
+                    serverFollows = serverFollows.filterNot { key.removes(it.key) }
+                }
             }
             publish()
         }
@@ -100,7 +157,7 @@ class TeamFollows(private val api: MtApi) {
     fun clear() {
         synchronized(lock) {
             generation++
-            serverIds = emptySet()
+            serverKeys = emptySet()
             serverFollows = emptyList()
             pending.clear()
             _loaded.value = false

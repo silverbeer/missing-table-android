@@ -247,9 +247,15 @@ interface MtApi {
     @POST("api/users/me/team-follows")
     suspend fun followTeam(@Body body: TeamFollowRequest): TeamFollowResult
 
-    /** Idempotent: 204 whether or not the follow existed. */
+    /**
+     * Idempotent: 204 whether or not the follow existed. Without [ageGroupId]
+     * every follow of the team goes; with it, only that squad's (SB-1645).
+     */
     @DELETE("api/users/me/team-follows/{teamId}")
-    suspend fun unfollowTeam(@Path("teamId") teamId: Int): retrofit2.Response<Unit>
+    suspend fun unfollowTeam(
+        @Path("teamId") teamId: Int,
+        @Query("age_group_id") ageGroupId: Int? = null,
+    ): retrofit2.Response<Unit>
 
     @GET("api/users/me/team-follows")
     suspend fun teamFollows(): TeamFollowsResponse

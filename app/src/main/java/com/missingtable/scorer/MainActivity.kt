@@ -55,6 +55,7 @@ import com.missingtable.scorer.ui.profile.ProfileScreen
 import com.missingtable.scorer.ui.table.TableScreen
 import com.missingtable.scorer.ui.tournaments.TournamentsScreen
 import com.missingtable.scorer.ui.team.TeamScreen
+import com.missingtable.scorer.ui.team.TeamLink
 import com.missingtable.scorer.ui.common.SyncStatusBanner
 import com.missingtable.scorer.ui.common.rememberSyncStatus
 import com.missingtable.scorer.ui.theme.MtTheme
@@ -115,9 +116,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Team screen route; name and subtitle ride along because there is no team endpoint (SB-1464). */
-private fun teamRoute(teamId: Int, name: String, subtitle: String?): String =
-    "team/$teamId?name=${android.net.Uri.encode(name)}&subtitle=${android.net.Uri.encode(subtitle ?: "")}"
+/**
+ * Team screen route; name and subtitle ride along because there is no team
+ * endpoint (SB-1464), and so does the squad the caller showed (SB-1645, -1 = none).
+ */
+private fun teamRoute(link: TeamLink): String =
+    "team/${link.teamId}?name=${android.net.Uri.encode(link.name)}" +
+        "&subtitle=${android.net.Uri.encode(link.subtitle ?: "")}" +
+        "&ageGroupId=${link.ageGroupId ?: -1}" +
+        "&ageGroupName=${android.net.Uri.encode(link.ageGroupName ?: "")}"
 
 @Composable
 private fun AppNav(
@@ -212,7 +219,7 @@ private fun AppNav(
                         // preview and result, and scoring is a button there for those
                         // the server says may manage this match.
                         onOpenMatch = { match -> navController.navigate("match/${match.id}") },
-                        onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
+                        onOpenTeam = { link -> navController.navigate(teamRoute(link)) },
                         onOpenNotificationPrefs = { navController.navigate("notification-prefs") },
                         onUpdateChecked = { forceUpdate.value = it },
                         onLogout = {
@@ -231,7 +238,7 @@ private fun AppNav(
                         },
                     )
                 }
-                composable("team/{teamId}?name={name}&subtitle={subtitle}") { entry ->
+                composable("team/{teamId}?name={name}&subtitle={subtitle}&ageGroupId={ageGroupId}&ageGroupName={ageGroupName}") { entry ->
                     val teamId = entry.arguments?.getString("teamId")?.toIntOrNull() ?: return@composable
                     TeamScreen(
                         container = container,
@@ -239,6 +246,8 @@ private fun AppNav(
                         name = entry.arguments?.getString("name")?.takeIf { it.isNotBlank() },
                         subtitle = entry.arguments?.getString("subtitle")?.takeIf { it.isNotBlank() },
                         onBack = { navController.popBackStack() },
+                        ageGroupId = entry.arguments?.getString("ageGroupId")?.toIntOrNull()?.takeIf { it > 0 },
+                        ageGroupName = entry.arguments?.getString("ageGroupName")?.takeIf { it.isNotBlank() },
                     )
                 }
                 composable("notification-prefs") {
@@ -289,7 +298,7 @@ private fun AppNav(
                         container = container,
                         matchId = matchId,
                         onBack = { navController.popBackStack() },
-                        onOpenTeam = { id, name, sub -> navController.navigate(teamRoute(id, name, sub)) },
+                        onOpenTeam = { link -> navController.navigate(teamRoute(link)) },
                         onAction = { match, action ->
                             val common = "seasonId=${match.seasonId ?: -1}&ageGroupId=${match.ageGroupId ?: -1}"
                             when (action) {
@@ -402,7 +411,7 @@ private enum class HomeTab(val label: String) {
 private fun HomeShell(
     container: AppContainer,
     onOpenMatch: (com.missingtable.scorer.data.api.MatchSummary) -> Unit,
-    onOpenTeam: (Int, String, String?) -> Unit,
+    onOpenTeam: (TeamLink) -> Unit,
     onOpenNotificationPrefs: () -> Unit,
     onUpdateChecked: (forceUpdate: Boolean) -> Unit,
     onLogout: () -> Unit,
