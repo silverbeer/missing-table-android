@@ -51,6 +51,7 @@ import com.missingtable.scorer.domain.Competitions
 import com.missingtable.scorer.domain.Conferences
 import com.missingtable.scorer.domain.MatchBucketing
 import com.missingtable.scorer.domain.MatchWeek
+import com.missingtable.scorer.domain.MotwSlot
 import java.time.LocalDate
 import kotlinx.coroutines.launch
 
@@ -102,15 +103,6 @@ fun MatchListScreen(
         runCatching { container.api.leagues() }.onSuccess { leagues = it }
     }
 
-    // The pick belongs to the week on screen, so week navigation moves it.
-    // No pick is the ordinary answer and renders as nothing; so does a failed
-    // fetch — an error banner over a feature most weeks do not use would be
-    // noise on the one screen that has to stay readable at a pitch.
-    LaunchedEffect(reloadKey, weekOffset) {
-        val monday = MatchWeek.of(LocalDate.now(), weekOffset).start
-        motw = runCatching { container.api.motw(monday.toString()) }.getOrNull()?.motw
-    }
-
     LaunchedEffect(reloadKey, weekOffset) {
         loading = true
         error = null
@@ -160,6 +152,24 @@ fun MatchListScreen(
         if (activeConferences != savedConferences && conferences.isNotEmpty()) {
             container.uiPrefs.setMatchesConferences(activeConferences)
         }
+    }
+
+    // The pick belongs to the week on screen, so week navigation moves it.
+    // No pick is the ordinary answer and renders as nothing; so does a failed
+    // fetch — an error banner over a feature most weeks do not use would be
+    // noise on the one screen that has to stay readable at a pitch.
+    //
+    // Picks are per age group (SB-1641), so the age-group chip moves it too,
+    // and narrowing to the Pathway division asks for that pool's pick. With
+    // "All" ages it is the week's first pick, as before.
+    val motwPool = ageGroup?.let {
+        MotwSlot.pool(conferences.filter { it.id in activeConferences }.map { it.name })
+    }
+    LaunchedEffect(reloadKey, weekOffset, ageGroup, motwPool) {
+        val monday = MatchWeek.of(LocalDate.now(), weekOffset).start
+        motw = runCatching {
+            container.api.motw(monday.toString(), ageGroupId = ageGroup, pool = motwPool)
+        }.getOrNull()?.motw
     }
 
     // Conference narrows BEFORE the competition chips are built, so their

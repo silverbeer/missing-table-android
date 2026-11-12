@@ -1,6 +1,7 @@
 package com.missingtable.scorer.domain
 
 import com.missingtable.scorer.data.api.MatchSummary
+import com.missingtable.scorer.data.api.Motw
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -111,6 +112,19 @@ object MotwCopy {
     /** The age group, or null when it is absent or unknown. */
     fun ageGroupLabel(match: MatchSummary): String? =
         match.ageGroupName?.takeIf { it.isNotBlank() && it != "Unknown" }
+
+    /**
+     * The hero's heading (SB-1641): "U16 Match of the Week" once picks are per
+     * age group, so the strip says whose pick it is before anyone opens it.
+     * The slot's own age group wins over the fixture's; with neither, the
+     * plain heading. Pool is left out on purpose — it would not fit a phone
+     * strip, and the meta line names the division once opened.
+     */
+    fun title(motw: Motw): String {
+        val age = motw.ageGroup?.takeIf { it.isNotBlank() && it != "Unknown" }
+            ?: ageGroupLabel(motw.match)
+        return listOfNotNull(age, "Match of the Week").joinToString(" ")
+    }
 
     private fun kickoff(match: MatchSummary, zone: ZoneId) =
         match.scheduledKickoff

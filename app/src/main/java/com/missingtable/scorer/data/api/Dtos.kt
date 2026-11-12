@@ -366,11 +366,16 @@ data class MatchTypeDto(
  * Match of the Week (SB-1108). `motw` is null for a week nobody picked,
  * which is the ordinary state of the feature — the endpoint answers 200 with
  * a null rather than 404 precisely so this is not an error path.
+ *
+ * Per-slot picks (SB-1641) add `picks` — every slot's pick for the week — and
+ * the slot fields on each pick. A server predating them sends neither, so all
+ * of it defaults rather than failing the decode.
  */
 @Serializable
 data class MotwResponse(
     @SerialName("week_start") val weekStart: String? = null,
     val motw: Motw? = null,
+    val picks: List<Motw> = emptyList(),
 )
 
 @Serializable
@@ -381,6 +386,11 @@ data class Motw(
     /** The editorial line, when an admin wrote one. */
     val blurb: String? = null,
     val match: MatchSummary,
+    /** `main` or `pathway`; null from a server predating per-slot picks. */
+    val pool: String? = null,
+    @SerialName("age_group_id") val ageGroupId: Int? = null,
+    /** The slot's age group name, e.g. "U16". */
+    @SerialName("age_group") val ageGroup: String? = null,
 )
 
 // ── Post-match editing (SB-281) ─────────────────────────────────────────────
