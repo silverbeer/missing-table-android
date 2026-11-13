@@ -56,4 +56,11 @@ class StandingsFormatTest {
             Locale.setDefault(saved)
         }
     }
+
+    @Test
+    fun `movement shows the web's arrows (SB-1651)`() {
+        assertEquals("▲ 1", StandingsFormat.movement(1))
+        assertEquals("▼ 2", StandingsFormat.movement(-2))
+        assertEquals("—", StandingsFormat.movement(0))
+    }
 }
