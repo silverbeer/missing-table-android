@@ -454,9 +454,16 @@ private fun HomeShell(
         return
     }
 
+    // Sideways, the Table needs the height more than the tabs do (SB-1665):
+    // the bar goes while it is on its side and returns once upright. Only
+    // the Table can rotate, so no other tab ever loses it.
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val hideTabs = landscape && tab == HomeTab.Table
+
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            if (!hideTabs) NavigationBar {
                 HomeTab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
