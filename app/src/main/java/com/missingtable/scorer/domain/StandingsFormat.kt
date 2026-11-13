@@ -30,6 +30,16 @@ object StandingsFormat {
         return if (text.first() != '-' && text != "0.00") "+$text" else text
     }
 
+    /**
+     * The +/- column (SB-1651): movement in the table since last week, as the
+     * web shows it. Positive moved up.
+     */
+    fun movement(change: Int): String = when {
+        change > 0 -> "▲ $change"
+        change < 0 -> "▼ ${-change}"
+        else -> "—"
+    }
+
     /** Whole-number goal difference: "+3", "0", "-2". */
     fun goalDifference(value: Int): String = if (value > 0) "+$value" else "$value"
 

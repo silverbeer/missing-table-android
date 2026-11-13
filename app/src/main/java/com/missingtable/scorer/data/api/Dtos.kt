@@ -297,6 +297,8 @@ data class StandingRow(
     @SerialName("gd_per_match") val gdPerMatch: Double? = null,
     @SerialName("gf_per_match") val gfPerMatch: Double? = null,
     @SerialName("ga_per_match") val gaPerMatch: Double? = null,
+    // The club's crest, shown beside the team name (SB-1651).
+    @SerialName("logo_url") val logoUrl: String? = null,
 )
 
 @Serializable

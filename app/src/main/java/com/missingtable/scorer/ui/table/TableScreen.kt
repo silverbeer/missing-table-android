@@ -1,6 +1,22 @@
 package com.missingtable.scorer.ui.table
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.compose.foundation.ScrollState
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
+import com.missingtable.scorer.domain.StandingsSort
+import com.missingtable.scorer.ui.common.TeamCrest
+import com.missingtable.scorer.ui.common.findActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -93,6 +110,8 @@ fun TableScreen(
     var tableKey by remember { mutableStateOf<TableKey?>(null) }
 
     var standings by remember { mutableStateOf<List<StandingRow>?>(null) }
+    // Column sort (SB-1651); null = standings order. Kept across filter changes, as on the web.
+    var sort by remember { mutableStateOf<StandingsSort.Sort?>(null) }
     var coverage by remember { mutableStateOf<TableCoverage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -199,15 +218,33 @@ fun TableScreen(
         }
     }
 
+    // Landscape (SB-1651): the Table alone may rotate, and on its side the
+    // short screen goes to the table: filters fold into a one-line summary.
+    UnlockRotationWhileShown()
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var filtersOpen by remember { mutableStateOf(false) }
+    val showFilters = !landscape || filtersOpen
+
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        if (ageGroups.isNotEmpty()) {
+        if (landscape) {
+            val summary = listOfNotNull(
+                ageGroups.firstOrNull { it.id == selectedAgeGroup }?.name,
+                leagues.firstOrNull { it.id == selectedLeague }?.name,
+                competitionChips.firstOrNull { it.value == selectedCompetition }?.label,
+                divisionOptions.firstOrNull { it.id == selectedDivision }?.name,
+            ).joinToString(" · ")
+            TextButton(onClick = { filtersOpen = !filtersOpen }) {
+                Text(if (filtersOpen) "Hide filters ▲" else "${summary.ifEmpty { "Filters" }} ▼")
+            }
+        }
+        if (showFilters && ageGroups.isNotEmpty()) {
             ChipRow(
                 options = ageGroups.map { it.id to it.name },
                 selectedId = selectedAgeGroup,
                 onSelect = { selectedAgeGroup = it },
             )
         }
-        if (leagues.isNotEmpty()) {
+        if (showFilters && leagues.isNotEmpty()) {
             ChipRow(
                 options = leagues.map { it.id to it.name },
                 selectedId = selectedLeague,
@@ -215,7 +252,7 @@ fun TableScreen(
             )
         }
         // Only when there's a choice: U13 Homegrown plays League alone.
-        if (competitionChips.size > 1) {
+        if (showFilters && competitionChips.size > 1) {
             val indexed = competitionChips.withIndex().toList()
             ChipRow(
                 options = indexed.map { (i, chip) -> i to chip.label },
@@ -223,7 +260,7 @@ fun TableScreen(
                 onSelect = { i -> selectedCompetition = competitionChips[i].value },
             )
         }
-        Row(
+        if (showFilters) Row(
             Modifier.fillMaxWidth().padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -284,10 +321,16 @@ fun TableScreen(
                 // One scroll state for the header and every row, so the stat
                 // columns move together and stay aligned (SB-1623).
                 val statsScroll = rememberScrollState()
-                HeaderRow(statsScroll)
+                val teamWidth = if (landscape) TeamWidthWide else TeamWidth
+                HeaderRow(statsScroll, sort, teamWidth) { key -> sort = StandingsSort.next(sort, key) }
                 HorizontalDivider()
-                val numbered = rows.withIndex().toList()
-                LazyColumn(Modifier.fillMaxSize()) {
+                // League position survives sorting (SB-1651): `index` is the standings row.
+                val numbered = StandingsSort.apply(rows, sort, sort?.let { sortValueFor(it.key) } ?: { null })
+                // A re-sort must start at the top: the list otherwise keeps the
+                // old first row anchored, hiding whatever now sorts above it.
+                val listState = rememberLazyListState()
+                LaunchedEffect(sort) { listState.scrollToItem(0) }
+                LazyColumn(Modifier.fillMaxSize(), state = listState) {
                     // Keys must not collide either: a row with no team_id fell
                     // back to its index, which is the same Int space as a
                     // team_id, and Compose throws the moment the two meet.
@@ -295,7 +338,7 @@ fun TableScreen(
                         numbered,
                         key = { (idx, row) -> row.teamId?.let { "team-$it" } ?: "row-$idx" },
                     ) { (idx, row) ->
-                        StandingLine(position = idx + 1, row = row, statsScroll = statsScroll) { teamId ->
+                        StandingLine(position = idx + 1, row = row, statsScroll = statsScroll, sort = sort, teamWidth = teamWidth) { teamId ->
                             val sub = teamSubtitle(
                                 row.team,
                                 null,
@@ -375,47 +418,93 @@ private fun PickerDropdown(
 
 // Pinned on the left; the stat columns scroll horizontally beside them.
 private val PositionWidth = 28.dp
-private val TeamWidth = 132.dp
+private val TeamWidth = 150.dp
+private val TeamWidthWide = 220.dp
+private val CrestSize = 18.dp
+private val MoveWidth = 40.dp
+private val FormDot = 18.dp
+
+private val WinGreen = Color(0xFF22C55E)
+private val LossRed = Color(0xFFEF4444)
+private val DrawGrey = Color(0xFF9CA3AF)
 
 /**
  * One stat column (SB-1623). Same order as the web: GP, Pts and PPM first so
  * a phone shows why a team ranks where it does (9 pts from 4 = 2.25 sits
  * above 11 from 5 = 2.20) without scrolling. PPM is the ranking column.
+ * Tapping a header sorts by [sortValue] (SB-1651).
  */
 private class StatColumn(
     val label: String,
     val width: Dp,
     val weight: FontWeight = FontWeight.Normal,
+    val accent: Boolean = false,
+    val sortValue: (StandingRow) -> Double?,
     val value: (StandingRow) -> String,
 )
 
 private val StatColumns = listOf(
-    StatColumn("GP", 32.dp) { "${it.played}" },
-    StatColumn("Pts", 34.dp, FontWeight.Bold) { "${it.points}" },
-    StatColumn("PPM", 44.dp, FontWeight.SemiBold) { StandingsFormat.perMatch(it.pointsPerMatch) },
-    StatColumn("W", 30.dp) { "${it.wins}" },
-    StatColumn("D", 30.dp) { "${it.draws}" },
-    StatColumn("L", 30.dp) { "${it.losses}" },
-    StatColumn("GF", 32.dp) { "${it.goalsFor}" },
-    StatColumn("GA", 32.dp) { "${it.goalsAgainst}" },
-    StatColumn("GD", 36.dp) { StandingsFormat.goalDifference(it.goalDifference) },
-    StatColumn("GD/M", 48.dp) { StandingsFormat.signedPerMatch(it.gdPerMatch) },
-    StatColumn("GF/M", 44.dp) { StandingsFormat.perMatch(it.gfPerMatch) },
-    StatColumn("GA/M", 44.dp) { StandingsFormat.perMatch(it.gaPerMatch) },
+    StatColumn("GP", 34.dp, sortValue = { it.played.toDouble() }) { "${it.played}" },
+    StatColumn("PTS", 36.dp, FontWeight.Bold, accent = true, sortValue = { it.points.toDouble() }) { "${it.points}" },
+    StatColumn("PPM", 46.dp, FontWeight.SemiBold, sortValue = { it.pointsPerMatch }) {
+        StandingsFormat.perMatch(it.pointsPerMatch)
+    },
+    StatColumn("W", 30.dp, sortValue = { it.wins.toDouble() }) { "${it.wins}" },
+    StatColumn("D", 30.dp, sortValue = { it.draws.toDouble() }) { "${it.draws}" },
+    StatColumn("L", 30.dp, sortValue = { it.losses.toDouble() }) { "${it.losses}" },
+    StatColumn("GF", 32.dp, sortValue = { it.goalsFor.toDouble() }) { "${it.goalsFor}" },
+    StatColumn("GA", 32.dp, sortValue = { it.goalsAgainst.toDouble() }) { "${it.goalsAgainst}" },
+    StatColumn("GD", 38.dp, sortValue = { it.goalDifference.toDouble() }) {
+        StandingsFormat.goalDifference(it.goalDifference)
+    },
+    StatColumn("GD/M", 50.dp, sortValue = { it.gdPerMatch }) { StandingsFormat.signedPerMatch(it.gdPerMatch) },
+    StatColumn("GF/M", 46.dp, sortValue = { it.gfPerMatch }) { StandingsFormat.perMatch(it.gfPerMatch) },
+    StatColumn("GA/M", 46.dp, sortValue = { it.gaPerMatch }) { StandingsFormat.perMatch(it.gaPerMatch) },
 )
 
+private fun sortValueFor(key: String): (StandingRow) -> Double? =
+    StatColumns.firstOrNull { it.label == key }?.sortValue ?: { null }
+
+/** Last five results, five dots wide (SB-1651). */
+private val FormWidth = (FormDot + 3.dp) * 5 + 8.dp
+
 @Composable
-private fun HeaderRow(statsScroll: ScrollState) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+private fun HeaderRow(
+    statsScroll: ScrollState,
+    sort: StandingsSort.Sort?,
+    teamWidth: Dp,
+    onSort: (String) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Cell("#", PositionWidth, FontWeight.Bold)
         Text(
-            "Team",
-            modifier = Modifier.width(TeamWidth).padding(end = 6.dp),
+            "TEAM",
+            modifier = Modifier.width(teamWidth).padding(end = 6.dp),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
         )
-        Row(Modifier.weight(1f).horizontalScroll(statsScroll)) {
-            StatColumns.forEach { Cell(it.label, it.width, FontWeight.Bold) }
+        Row(Modifier.weight(1f).horizontalScroll(statsScroll), verticalAlignment = Alignment.CenterVertically) {
+            Cell("+/-", MoveWidth, FontWeight.Bold)
+            StatColumns.forEach { col ->
+                val caret = when {
+                    sort?.key != col.label -> ""
+                    sort.descending -> "▼"
+                    else -> "▲"
+                }
+                Text(
+                    col.label + caret,
+                    modifier = Modifier
+                        .width(col.width + if (caret.isEmpty()) 0.dp else 10.dp)
+                        .clickable { onSort(col.label) }
+                        .padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    color = if (caret.isEmpty()) Color.Unspecified else MaterialTheme.colorScheme.primary,
+                )
+            }
+            Cell("FORM", FormWidth, FontWeight.Bold)
         }
     }
 }
@@ -425,6 +514,8 @@ private fun StandingLine(
     position: Int,
     row: StandingRow,
     statsScroll: ScrollState,
+    sort: StandingsSort.Sort?,
+    teamWidth: Dp,
     onOpenTeam: (Int) -> Unit,
 ) {
     val teamId = row.teamId
@@ -436,15 +527,71 @@ private fun StandingLine(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Cell("$position", PositionWidth)
-        Text(
-            row.team,
-            modifier = Modifier.width(TeamWidth).padding(end = 6.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Row(Modifier.weight(1f).horizontalScroll(statsScroll)) {
-            StatColumns.forEach { Cell(it.value(row), it.width, it.weight) }
+        Row(
+            Modifier.width(teamWidth).padding(end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TeamCrest(row.logoUrl, row.team, size = CrestSize)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                row.team,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (teamId != null) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(Modifier.weight(1f).horizontalScroll(statsScroll), verticalAlignment = Alignment.CenterVertically) {
+            val move = row.positionChange
+            Text(
+                StandingsFormat.movement(move),
+                modifier = Modifier.width(MoveWidth),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (move != 0) FontWeight.Medium else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                color = when {
+                    move > 0 -> WinGreen
+                    move < 0 -> LossRed
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            StatColumns.forEach { col ->
+                val caretPad = if (sort?.key == col.label) 10.dp else 0.dp
+                Text(
+                    col.value(row),
+                    modifier = Modifier.width(col.width + caretPad),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = col.weight,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    color = if (col.accent) MaterialTheme.colorScheme.tertiary else Color.Unspecified,
+                )
+            }
+            FormDots(row.form)
+        }
+    }
+}
+
+/** Web's form column: a coloured dot per result, oldest first (SB-1651). */
+@Composable
+private fun FormDots(form: List<String>) {
+    Row(
+        Modifier.width(FormWidth),
+        horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
+    ) {
+        form.takeLast(5).forEach { r ->
+            val bg = when (r) {
+                "W" -> WinGreen
+                "L" -> LossRed
+                else -> DrawGrey
+            }
+            Box(
+                Modifier.size(FormDot).clip(CircleShape).background(bg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(r, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -459,4 +606,19 @@ private fun Cell(text: String, width: Dp, fontWeight: FontWeight = FontWeight.No
         textAlign = TextAlign.Center,
         maxLines = 1,
     )
+}
+
+/**
+ * The app is portrait-only, but the Table is wide (SB-1651): while it is on
+ * screen the phone may turn, following the user's own auto-rotate setting,
+ * and leaving it puts the app back to portrait. The activity handles the
+ * rotation itself (manifest configChanges), so no filter or sort is lost.
+ */
+@Composable
+private fun UnlockRotationWhileShown() {
+    val activity = LocalContext.current.findActivity() ?: return
+    DisposableEffect(activity) {
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+        onDispose { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+    }
 }
