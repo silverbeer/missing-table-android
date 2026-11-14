@@ -486,7 +486,11 @@ private fun HomeShell(
             }
         },
     ) { padding ->
-        androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
+        // The shell already pads for the status bar; consume it so a tab with
+        // its own TopAppBar (Matches) doesn't pad for it a second time (SB-1676).
+        androidx.compose.foundation.layout.Box(
+            Modifier.padding(padding).consumeWindowInsets(padding)
+        ) {
             when (tab) {
                 HomeTab.Matches -> MatchListScreen(
                     container = container,
