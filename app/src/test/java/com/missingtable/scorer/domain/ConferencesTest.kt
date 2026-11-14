@@ -173,7 +173,7 @@ class ConferencesTest {
     @Test
     fun `an empty selection filters nothing`() {
         val rows = listOf(m(northeast), m(turnpike, flexType))
-        assertEquals(rows.size, Conferences.filter(rows, emptySet()).size)
+        assertEquals(rows.size, Conferences.filter(rows, emptySet(), groupsOf(rows)).size)
     }
 
     @Test
@@ -181,7 +181,7 @@ class ConferencesTest {
         // Conferences are neighbours, not alternatives: a border club plays
         // several in one season and wants them in one list.
         val rows = listOf(m(northeast), m(turnpike, flexType), m(floridaLeague))
-        val kept = Conferences.filter(rows, setOf(10, 20))
+        val kept = Conferences.filter(rows, setOf(10, 20), groupsOf(rows))
         assertEquals(2, kept.size)
         assertTrue(kept.none { it.divisionId == 11 })
     }
@@ -209,11 +209,46 @@ class ConferencesTest {
     @Test
     fun `conference filtering runs before the competition counts`() {
         // The web narrows by conference first, so the chip counts describe the
-        // list underneath. Selecting Northeast must not leave "Flex 1" on a
-        // list with no Flex fixtures in it.
-        val rows = listOf(m(northeast), m(northeast), m(turnpike, flexType))
-        val chips = Competitions.chips(Conferences.filter(rows, setOf(10)), matchTypes)
-        assertEquals(listOf("League", "All"), chips.map { it.label })
+        // list underneath. Selecting Northeast must leave League at 2.
+        val rows = listOf(m(northeast), m(northeast), m(floridaLeague), m(turnpike, flexType))
+        val chips = Competitions.chips(Conferences.filter(rows, setOf(10), groupsOf(rows)), matchTypes)
         assertEquals(2, chips.first { it.label == "League" }.count)
     }
+
+    @Test
+    fun `a pick on the League row leaves Flex alone`() {
+        // Rows are separate questions (SB-1680): Northeast narrows League
+        // fixtures only; the Flex row's own "All" still holds.
+        val rows = listOf(m(northeast), m(floridaLeague), m(turnpike, flexType), m(floridaFlex, flexType))
+        val kept = Conferences.filter(rows, setOf(10), groupsOf(rows))
+        assertEquals(listOf(10, 20, 21), kept.map { it.divisionId })
+    }
+
+    @Test
+    fun `picks on both rows narrow both`() {
+        val rows = listOf(m(northeast), m(floridaLeague), m(turnpike, flexType), m(floridaFlex, flexType))
+        val kept = Conferences.filter(rows, setOf(10, 21), groupsOf(rows))
+        assertEquals(listOf(10, 21), kept.map { it.divisionId })
+    }
+
+    @Test
+    fun `Homegrown and Academy League conferences get a row each`() {
+        // Both are League; one mixed row put two "Northeast" chips side by
+        // side (SB-1680). Each row takes its league's name.
+        val hg = homegrown.copy(displayOrder = 1)
+        val academy = LeagueDto(id = 2, name = "Academy", matchTypeId = 1, displayOrder = 3)
+        val academyNortheast = DivisionDto(id = 30, name = "Northeast", leagueId = 2)
+        val rows = listOf(m(academyNortheast), m(northeast), m(turnpike, flexType))
+        val groups = Conferences.groups(
+            Conferences.visible(rows, divisions + academyNortheast),
+            listOf(hg, flex, academy),
+            matchTypes,
+        )
+        assertEquals(listOf("Homegrown", "Academy", "Flex"), groups.map { it.label })
+        assertEquals(listOf("League", "League", "Flex"), groups.map { it.competition })
+        assertEquals(listOf(30), groups[1].conferences.map { it.id })
+    }
+
+    private fun groupsOf(rows: List<MatchSummary>) =
+        Conferences.groups(Conferences.visible(rows, divisions), leagues, matchTypes)
 }
