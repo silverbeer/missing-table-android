@@ -25,7 +25,19 @@ object Conferences {
 
     data class Conference(val id: Int, val name: String, val leagueId: Int?)
 
-    data class Group(val key: String, val label: String, val conferences: List<Conference>)
+    /**
+     * One row of conference chips.
+     *
+     * @param competition the competition its tables are ("League", "Flex"),
+     *   or null when the league does not say — the Matches tab hides a row
+     *   whose competition the competition chip has filtered out (SB-1680).
+     */
+    data class Group(
+        val key: String,
+        val label: String,
+        val conferences: List<Conference>,
+        val competition: String? = null,
+    )
 
     /**
      * The conferences worth reaching first, per competition (SB-1117).
@@ -79,6 +91,11 @@ object Conferences {
      *
      * Within a group the watched conferences come first, in [PRIORITY] order,
      * and everything else keeps the alphabetical order [visible] gave it.
+     *
+     * When two leagues share a competition — Homegrown and Academy are both
+     * League — the group splits into one row per league, labelled with the
+     * league's name, so a "Northeast" from each never sits side by side
+     * (SB-1680). With one league it keeps the competition's name.
      */
     fun groups(
         conferences: List<Conference>,
@@ -100,17 +117,30 @@ object Conferences {
                 // Stable sort, so conferences off the priority list keep the
                 // alphabetical order they arrived in.
                 val priority = PRIORITY[label].orEmpty()
-                Group(
-                    key = key.lowercase().replace(Regex("[^a-z0-9]+"), "-"),
-                    label = label,
-                    conferences = list.sortedBy { conference ->
-                        priority.indexOf(conference.name).takeIf { it >= 0 } ?: Int.MAX_VALUE
-                    },
-                ) to if (key == "other") 999 else (order[label] ?: 99)
+                val sorted = list.sortedBy { conference ->
+                    priority.indexOf(conference.name).takeIf { it >= 0 } ?: Int.MAX_VALUE
+                }
+                val competition = label.takeUnless { key == "other" }
+                val byLeague = sorted.groupBy { it.leagueId }
+                val rows = if (byLeague.size <= 1 || key == "other") {
+                    listOf(Group(slug(key), label, sorted, competition))
+                } else {
+                    byLeague.entries
+                        .sortedBy { (id, _) ->
+                            leagues.firstOrNull { it.id == id }?.displayOrder ?: Int.MAX_VALUE
+                        }
+                        .map { (id, confs) ->
+                            val name = leagues.firstOrNull { it.id == id }?.name ?: label
+                            Group(slug("$key-$name"), name, confs, competition)
+                        }
+                }
+                rows to if (key == "other") 999 else (order[label] ?: 99)
             }
             .sortedBy { it.second }
-            .map { it.first }
+            .flatMap { it.first }
     }
+
+    private fun slug(s: String) = s.lowercase().replace(Regex("[^a-z0-9]+"), "-")
 
     /**
      * The competition whose tables a league's conferences are — "League" for
@@ -126,9 +156,26 @@ object Conferences {
         return matchTypes.firstOrNull { it.id == typeId }?.name
     }
 
-    /** [rows] narrowed to [selected]; an empty selection filters nothing. */
-    fun filter(rows: List<MatchSummary>, selected: Set<Int>): List<MatchSummary> =
-        if (selected.isEmpty()) rows else rows.filter { it.divisionId in selected }
+    /**
+     * [rows] narrowed to [selected], one row of chips at a time (SB-1680).
+     *
+     * Each group's "All" is its own: picking Northeast on the League row
+     * narrows League fixtures and leaves Flex alone, because the two rows are
+     * separate questions now that they sit on separate lines. A match whose
+     * conference is in no group is never hidden by this filter.
+     */
+    fun filter(rows: List<MatchSummary>, selected: Set<Int>, groups: List<Group>): List<MatchSummary> {
+        if (selected.isEmpty()) return rows
+        val groupOf = groups.flatMap { g -> g.conferences.map { it.id to g.key } }.toMap()
+        val narrowed = groups
+            .filter { g -> g.conferences.any { it.id in selected } }
+            .map { it.key }
+            .toSet()
+        return rows.filter { row ->
+            val group = groupOf[row.divisionId]
+            group == null || group !in narrowed || row.divisionId in selected
+        }
+    }
 
     /**
      * Drops selected conferences the current view does not play.

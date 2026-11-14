@@ -104,4 +104,25 @@ class UiPrefs(private val context: Context) {
             else prefs[matchesConferencesKey] = ids.sorted().joinToString(",")
         }
     }
+
+    private val matchesProgramKey = intPreferencesKey("matches_program_league_id")
+
+    /** Program filter on the Matches tab — a top-level league id; null means both (SB-1680). */
+    val matchesProgram: Flow<Int?> = context.uiDataStore.data.map { it[matchesProgramKey] }
+
+    suspend fun setMatchesProgram(leagueId: Int?) {
+        context.uiDataStore.edit { prefs ->
+            if (leagueId == null) prefs.remove(matchesProgramKey) else prefs[matchesProgramKey] = leagueId
+        }
+    }
+
+    private val matchesFiltersOpenKey = booleanPreferencesKey("matches_filters_open")
+
+    /** Whether the Matches filter panel is open; open until first closed (SB-1680). */
+    val matchesFiltersOpen: Flow<Boolean> =
+        context.uiDataStore.data.map { it[matchesFiltersOpenKey] ?: true }
+
+    suspend fun setMatchesFiltersOpen(open: Boolean) {
+        context.uiDataStore.edit { it[matchesFiltersOpenKey] = open }
+    }
 }

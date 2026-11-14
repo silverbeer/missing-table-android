@@ -1,8 +1,6 @@
 package com.missingtable.scorer.ui.matches
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +11,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -45,6 +40,7 @@ import com.missingtable.scorer.data.api.LeagueDto
 import com.missingtable.scorer.data.api.MatchSummary
 import com.missingtable.scorer.data.api.MatchTypeDto
 import com.missingtable.scorer.data.api.Motw
+import com.missingtable.scorer.data.api.SeasonDto
 import com.missingtable.scorer.ui.common.TeamCrest
 import com.missingtable.scorer.domain.AgeGroups
 import com.missingtable.scorer.domain.Competitions
@@ -52,6 +48,8 @@ import com.missingtable.scorer.domain.Conferences
 import com.missingtable.scorer.domain.MatchBucketing
 import com.missingtable.scorer.domain.MatchWeek
 import com.missingtable.scorer.domain.MotwSlot
+import com.missingtable.scorer.domain.Programs
+import com.missingtable.scorer.domain.Seasons
 import java.time.LocalDate
 import kotlinx.coroutines.launch
 
@@ -83,7 +81,12 @@ fun MatchListScreen(
     val savedType by container.uiPrefs.matchesType.collectAsState(initial = null)
     val typeChosen by container.uiPrefs.matchesTypeChosen.collectAsState(initial = false)
     val savedConferences by container.uiPrefs.matchesConferences.collectAsState(initial = emptySet())
-    var weekOffset by remember { mutableIntStateOf(0) }
+    val savedProgram by container.uiPrefs.matchesProgram.collectAsState(initial = null)
+    val filtersOpen by container.uiPrefs.matchesFiltersOpen.collectAsState(initial = false)
+    var seasons by remember { mutableStateOf<List<SeasonDto>>(emptyList()) }
+    // Null is the current season. Not persisted: the tab always opens on now.
+    var seasonId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var weekOffset by rememberSaveable { mutableIntStateOf(0) }
     // Closed by default (SB-1118); survives rotation, resets with the session.
     var needsScoringExpanded by rememberSaveable { mutableStateOf(false) }
     var ageGroupTouched by remember { mutableStateOf(false) }
@@ -101,9 +104,13 @@ fun MatchListScreen(
         runCatching { container.api.matchTypes() }.onSuccess { matchTypes = it }
         runCatching { container.api.divisions() }.onSuccess { divisions = it }
         runCatching { container.api.leagues() }.onSuccess { leagues = it }
+        runCatching { container.api.seasons() }.onSuccess { list ->
+            seasons = list.sortedByDescending { it.startDate ?: "" }
+        }
     }
+    val currentSeason = Seasons.pickCurrent(seasons)
 
-    LaunchedEffect(reloadKey, weekOffset) {
+    LaunchedEffect(reloadKey, weekOffset, seasonId) {
         loading = true
         error = null
         val today = LocalDate.now()
@@ -118,7 +125,7 @@ fun MatchListScreen(
                 // /api/matches has NO server-side season default — without
                 // this, prior-season matches inside the window leak in
                 // (SB-338). Null (offline) degrades to date-window-only.
-                seasonId = container.currentSeasonId(),
+                seasonId = seasonId ?: container.currentSeasonId(),
                 startDate = from.toString(),
                 endDate = week.end.toString(),
             )
@@ -142,10 +149,20 @@ fun MatchListScreen(
         .sortedBy { it.second }
     val byAge = AgeGroups.filter(matches, ageGroup)
 
-    // Conferences come from what this age group plays, so switching age group
-    // re-offers them — and prunes a selection the new group does not play,
-    // which would otherwise empty the list with no selected chip to explain it.
-    val conferences = Conferences.visible(byAge, divisions)
+    // Program (SB-1680): Homegrown or Academy, Flex counted as Homegrown. A
+    // saved program the leagues list does not offer filters nothing.
+    // Counted over the week on screen only: "This week" also fetches 60 days
+    // back for NEEDS SCORING, and an Academy count from September would claim
+    // fixtures the week does not have.
+    val programOptions = Programs.options(byAge.filter { it.matchDate in week }, divisions, leagues)
+    val activeProgram = savedProgram?.takeIf { id -> programOptions.any { it.leagueId == id } }
+    val byProgram = Programs.filter(byAge, activeProgram, divisions, leagues)
+
+    // Conferences come from what this age group and program play, so switching
+    // either re-offers them — and prunes a selection the new view does not
+    // play, which would otherwise empty the list with no selected chip to
+    // explain it.
+    val conferences = Conferences.visible(byProgram, divisions)
     val conferenceGroups = Conferences.groups(conferences, leagues, matchTypes)
     val activeConferences = Conferences.prune(savedConferences, conferences)
     LaunchedEffect(activeConferences, savedConferences) {
@@ -175,12 +192,61 @@ fun MatchListScreen(
     // Conference narrows BEFORE the competition chips are built, so their
     // counts describe the list underneath rather than contradicting it — the
     // same order the web applies (matchesBeforeTypeFilter, SB-1107).
-    val byConference = Conferences.filter(byAge, activeConferences)
+    val byConference = Conferences.filter(byProgram, activeConferences, conferenceGroups)
 
-    val competitionChips = Competitions.chips(byConference, matchTypes)
+    // Counted over the week on screen, like every section below (SB-1118).
+    val competitionChips = Competitions.chips(byConference.filter { it.matchDate in week }, matchTypes)
     val activeChip = Competitions.resolve(competitionChips, savedType, typeChosen)
     val typeDropped = typeChosen && Competitions.savedChoiceUnavailable(competitionChips, savedType)
     val visible = Competitions.filter(byConference, activeChip)
+
+    // A conference row whose competition the chip excludes has nothing to
+    // narrow, so it goes: League picks hide the Flex row and vice versa.
+    val shownGroups = conferenceGroups.filter { g ->
+        val typeId = matchTypes.firstOrNull { it.name == g.competition }?.id
+        activeChip.isAll || typeId == null || typeId in activeChip.typeIds.orEmpty()
+    }
+    val filterState = MatchFilterState(
+        seasons = seasons.map { it.id to (it.name ?: "Season ${it.id}") },
+        seasonId = seasonId ?: currentSeason?.id,
+        ageGroups = ageGroupOptions,
+        ageGroupId = ageGroup,
+        programs = programOptions,
+        programId = activeProgram,
+        competitions = competitionChips,
+        competition = activeChip,
+        conferenceGroups = shownGroups,
+        selectedConferences = activeConferences,
+    )
+    val filterActions = MatchFilterActions(
+        onSeason = { id ->
+            seasonId = id.takeUnless { it == currentSeason?.id }
+            weekOffset = seasons.firstOrNull { it.id == id }
+                ?.let { Seasons.weekOffsetFor(it, seasons, LocalDate.now()) } ?: 0
+        },
+        onAgeGroup = { id ->
+            ageGroupTouched = true
+            ageGroup = id
+            scope.launch { container.uiPrefs.setMatchesAgeGroup(id) }
+        },
+        onProgram = { id -> scope.launch { container.uiPrefs.setMatchesProgram(id) } },
+        onCompetition = { chip ->
+            scope.launch { container.uiPrefs.setMatchesType(chip.key.takeUnless { chip.isAll }) }
+        },
+        onConferences = { ids -> scope.launch { container.uiPrefs.setMatchesConferences(ids) } },
+        onReset = {
+            ageGroupTouched = true
+            ageGroup = null
+            seasonId = null
+            weekOffset = 0
+            scope.launch {
+                container.uiPrefs.setMatchesAgeGroup(null)
+                container.uiPrefs.setMatchesProgram(null)
+                container.uiPrefs.setMatchesType(null)
+                container.uiPrefs.setMatchesConferences(emptySet())
+            }
+        },
+    )
 
     // Every section belongs to the week on screen, NEEDS SCORING included
     // (SB-1118). It used to keep the wider 60-day look-back so an overdue
@@ -220,124 +286,15 @@ fun MatchListScreen(
                 .padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Only worth showing when there is more than one age group to
-            // choose between (SB-642).
-            if (ageGroupOptions.size > 1) {
-                item {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilterChip(
-                            selected = ageGroup == null,
-                            onClick = {
-                                ageGroupTouched = true
-                                ageGroup = null
-                                scope.launch { container.uiPrefs.setMatchesAgeGroup(null) }
-                            },
-                            label = { Text("All") },
-                        )
-                        ageGroupOptions.forEach { (id, name) ->
-                            FilterChip(
-                                selected = ageGroup == id,
-                                onClick = {
-                                    ageGroupTouched = true
-                                    ageGroup = id
-                                    scope.launch { container.uiPrefs.setMatchesAgeGroup(id) }
-                                },
-                                label = { Text(name) },
-                            )
-                        }
-                    }
-                }
-            }
-            // Match type (SB-681). Chips come from the loaded rows, and the
-            // default follows the data — a fixed "League" would show an empty
-            // list in a preseason where every fixture is a Friendly.
-            // One chip per competition actually present, then the combined
-            // "League + Flex", then All — the web's order (SB-1107).
-            //
-            // Shown from two chips, as the web does, not three. Hiding the row
-            // at one competition made the control vanish the moment a
-            // conference selection narrowed to a single competition — leaving
-            // a dropped choice, an explanation, and no way to act on either
-            // (SB-1110).
-            if (competitionChips.size > 1) {
-                item {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        competitionChips.forEach { chip ->
-                            FilterChip(
-                                selected = activeChip.key == chip.key,
-                                onClick = {
-                                    scope.launch {
-                                        container.uiPrefs.setMatchesType(
-                                            chip.key.takeUnless { chip.isAll },
-                                        )
-                                    }
-                                },
-                                label = { Text("${chip.label} ${chip.count}") },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Conference (SB-1110). Multi-select, because conferences are
-            // neighbours rather than alternatives — a club near a border plays
-            // three of them in one season. "All" is the empty selection, so it
-            // clears rather than adding a fourth value.
-            if (conferences.size > 1) {
-                item {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilterChip(
-                            selected = activeConferences.isEmpty(),
-                            onClick = { scope.launch { container.uiPrefs.setMatchesConferences(emptySet()) } },
-                            label = { Text("All conferences") },
-                        )
-                        conferenceGroups.forEach { group ->
-                            // The heading disambiguates same-named conferences
-                            // across competitions — Florida exists under both
-                            // League and Flex, as different rows (SB-1040).
-                            if (conferenceGroups.size > 1) {
-                                Text(
-                                    group.label.uppercase(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.align(Alignment.CenterVertically),
-                                )
-                            }
-                            group.conferences.forEach { conference ->
-                                FilterChip(
-                                    selected = conference.id in activeConferences,
-                                    onClick = {
-                                        val next = if (conference.id in activeConferences) {
-                                            activeConferences - conference.id
-                                        } else {
-                                            activeConferences + conference.id
-                                        }
-                                        scope.launch { container.uiPrefs.setMatchesConferences(next) }
-                                    },
-                                    label = { Text(conference.name) },
-                                )
-                            }
-                        }
-                    }
-                }
+            // One collapsible panel for every filter (SB-1680): closed, it is
+            // a single summary line; open, one labelled row per filter.
+            item {
+                MatchFilterPanel(
+                    state = filterState,
+                    actions = filterActions,
+                    open = filtersOpen,
+                    onToggle = { scope.launch { container.uiPrefs.setMatchesFiltersOpen(!filtersOpen) } },
+                )
             }
 
             // Match of the Week sits above week navigation, as on the web —
@@ -350,31 +307,15 @@ fun MatchListScreen(
 
             // Week navigation, Monday-Sunday, matching the web (SB-681).
             item {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(onClick = { weekOffset-- }, modifier = Modifier.weight(1f)) {
-                        Text("←")
-                    }
-                    Button(
-                        onClick = { weekOffset = 0 },
-                        enabled = weekOffset != 0,
-                        modifier = Modifier.weight(2f),
-                    ) { Text(if (weekOffset == 0) "This week" else "Back to this week") }
-                    OutlinedButton(onClick = { weekOffset++ }, modifier = Modifier.weight(1f)) {
-                        Text("→")
-                    }
-                }
-            }
-            item {
-                Text(
-                    week.label(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 4.dp),
+                WeekNav(
+                    label = week.label(),
+                    isThisWeek = weekOffset == 0,
+                    onPrev = { weekOffset-- },
+                    onNext = { weekOffset++ },
+                    onToday = {
+                        weekOffset = 0
+                        seasonId = null
+                    },
                 )
             }
             if (typeDropped) {
@@ -436,14 +377,22 @@ fun MatchListScreen(
             section("POSTPONED / OTHER", buckets.other, onOpenMatch, motwId)
             // An active filter hiding everything must say so — otherwise an
             // empty list reads as "nothing loaded" (SB-642).
-            if (buckets.size == 0 && matches.isNotEmpty() && ageGroup != null) {
+            if (buckets.size == 0 && matches.isNotEmpty() && visible.size < matches.size) {
                 item {
+                    val program = programOptions.firstOrNull { it.leagueId == activeProgram }
                     Text(
-                        "No matches for this age group. Tap All to see the other " +
-                            "${matches.size} in this window.",
+                        if (program != null && program.count == 0) {
+                            "No ${program.name} matches this week. Tap to reset filters."
+                        } else {
+                            "No matches with these filters. Tap to reset and see the " +
+                                "${matches.size} in this window."
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { filterActions.onReset() }
+                            .padding(vertical = 16.dp),
                     )
                 }
             }

@@ -325,6 +325,8 @@ data class SeasonDto(
     // Authoritative current-season flag (admin-set, exactly one true).
     @SerialName("is_current") val isCurrent: Boolean = false,
     @SerialName("start_date") val startDate: String? = null,
+    // Where the Matches tab lands when a past season is picked (SB-1680).
+    @SerialName("end_date") val endDate: String? = null,
 )
 
 @Serializable
