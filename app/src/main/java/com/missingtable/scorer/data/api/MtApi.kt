@@ -6,6 +6,7 @@ import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
+import retrofit2.http.PUT
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -20,6 +21,13 @@ interface MtApi {
 
     @GET("api/auth/me")
     suspend fun me(): MeResponse
+
+    /**
+     * Save one view's remembered filters to the account (SB-1717). The body
+     * carries only the fields that changed; the server merges them key by key.
+     */
+    @PUT("api/auth/filter-memory/{view}")
+    suspend fun putFilterMemory(@Path("view") view: String, @Body body: JsonObject)
 
     @GET("api/matches")
     suspend fun matches(

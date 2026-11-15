@@ -20,6 +20,7 @@ import com.missingtable.scorer.data.push.PushRegistrar
 import com.missingtable.scorer.data.push.TeamFollows
 import com.missingtable.scorer.data.repo.LiveMatchRepository
 import com.missingtable.scorer.data.sync.ConnectivityWatcher
+import com.missingtable.scorer.data.sync.FilterMemorySync
 import com.missingtable.scorer.data.sync.SyncEngine
 import com.missingtable.scorer.domain.NotificationIntent
 import com.google.firebase.FirebaseApp
@@ -98,6 +99,14 @@ class AppContainer(app: Application) {
     /** Followed teams, shared by every Follow button (SB-1464). */
     val teamFollows = TeamFollows(api)
 
+    /** Matches filters kept on the account, shared with web and iOS (SB-1717). */
+    val filterMemorySync = FilterMemorySync(
+        prefs = uiPrefs,
+        put = { view, body -> api.putFilterMemory(view, body) },
+        isLoggedIn = { tokenStore.accessToken() != null },
+        scope = appScope,
+    ).also { it.start() }
+
     // Current season (SB-338): one lookup per process. /api/matches does NOT
     // default to the current season server-side, so every match/tournament
     // fetch must pass this explicitly or prior-season data leaks in.
@@ -118,6 +127,7 @@ class AppContainer(app: Application) {
         runCatching { api.me() }.onSuccess { me ->
             val p = me.user?.profile ?: return@onSuccess
             tokenStore.saveSession(p.role, p.teamId, p.clubId, p.displayName ?: p.username, me.user?.id)
+            runCatching { filterMemorySync.adopt(me) }
         }
         // Holding a token is enough to (re)attach this device for push and
         // load the follows the buttons render from (SB-1464) — whether or not
@@ -132,6 +142,12 @@ class AppContainer(app: Application) {
     fun onForeground() {
         appScope.launch {
             if (tokenStore.accessToken() != null) teamFollows.ensureLoaded()
+        }
+        // Filters changed on the laptop since this app was last open (SB-1717).
+        // /me is a Redis-cached read; a failure leaves this device's own copy.
+        appScope.launch {
+            if (tokenStore.accessToken() == null) return@launch
+            runCatching { api.me() }.onSuccess { runCatching { filterMemorySync.adopt(it) } }
         }
     }
 

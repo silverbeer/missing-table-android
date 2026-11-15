@@ -4,9 +4,13 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.missingtable.scorer.domain.FilterMemory
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
@@ -18,7 +22,7 @@ import kotlinx.coroutines.flow.map
  */
 private val Context.uiDataStore by preferencesDataStore(name = "ui_prefs")
 
-class UiPrefs(private val context: Context) {
+class UiPrefs(private val context: Context) : FilterPrefs {
 
     private val matchesAgeGroupKey = intPreferencesKey("matches_age_group_id")
 
@@ -125,4 +129,75 @@ class UiPrefs(private val context: Context) {
     suspend fun setMatchesFiltersOpen(open: Boolean) {
         context.uiDataStore.edit { it[matchesFiltersOpenKey] = open }
     }
+
+    // === Account sync (SB-1717) ===
+
+    private val matchesFiltersSavedAtKey = longPreferencesKey("matches_filters_saved_at")
+
+    /** When the Matches filters last changed here or were adopted from the account; 0 = never. */
+    override suspend fun matchesSavedAt(): Long =
+        context.uiDataStore.data.map { it[matchesFiltersSavedAtKey] ?: 0L }.first()
+
+    override suspend fun setMatchesSavedAt(at: Long) {
+        context.uiDataStore.edit { it[matchesFiltersSavedAtKey] = at }
+    }
+
+    /** The four Matches filters the account copy shares, in its terms. */
+    override val matchesLocal: Flow<FilterMemory.Local> = context.uiDataStore.data
+        .map { prefs ->
+            FilterMemory.Local(
+                ageGroupId = prefs[matchesAgeGroupKey],
+                competition = FilterMemory.competitionOf(
+                    prefs[matchesTypeKey],
+                    prefs[matchesTypeChosenKey] ?: false,
+                ),
+                conferenceIds = prefs[matchesConferencesKey]
+                    ?.split(',')
+                    ?.mapNotNull { it.trim().toIntOrNull() }
+                    ?.toSet()
+                    .orEmpty(),
+                programLeagueId = prefs[matchesProgramKey],
+            )
+        }
+        .distinctUntilChanged()
+
+    /**
+     * Adopt the account copy in ONE edit, so the screen sees one change and
+     * the sync sees one state — never a half-applied mix it would send back.
+     */
+    override suspend fun applyMatches(local: FilterMemory.Local, savedAt: Long) {
+        context.uiDataStore.edit { prefs ->
+            if (local.ageGroupId == null) prefs.remove(matchesAgeGroupKey)
+            else prefs[matchesAgeGroupKey] = local.ageGroupId
+            if (local.competition == null) {
+                prefs.remove(matchesTypeKey)
+                prefs.remove(matchesTypeChosenKey)
+            } else {
+                val type = FilterMemory.savedTypeOf(local.competition)
+                if (type == null) prefs.remove(matchesTypeKey) else prefs[matchesTypeKey] = type
+                prefs[matchesTypeChosenKey] = true
+            }
+            if (local.conferenceIds.isEmpty()) prefs.remove(matchesConferencesKey)
+            else prefs[matchesConferencesKey] = local.conferenceIds.sorted().joinToString(",")
+            if (local.programLeagueId == null) prefs.remove(matchesProgramKey)
+            else prefs[matchesProgramKey] = local.programLeagueId
+            prefs[matchesFiltersSavedAtKey] = savedAt
+        }
+    }
+
+    /** The panel choice made on this device; null until it is first toggled. */
+    override val matchesPanelChoice: Flow<Boolean?> =
+        context.uiDataStore.data.map { it[matchesFiltersOpenKey] }.distinctUntilChanged()
+
+    override suspend fun adoptMatchesPanel(open: Boolean) = setMatchesFiltersOpen(open)
+}
+
+/** What [com.missingtable.scorer.data.sync.FilterMemorySync] needs from UiPrefs — a fake in tests. */
+interface FilterPrefs {
+    val matchesLocal: Flow<FilterMemory.Local>
+    val matchesPanelChoice: Flow<Boolean?>
+    suspend fun matchesSavedAt(): Long
+    suspend fun setMatchesSavedAt(at: Long)
+    suspend fun applyMatches(local: FilterMemory.Local, savedAt: Long)
+    suspend fun adoptMatchesPanel(open: Boolean)
 }
