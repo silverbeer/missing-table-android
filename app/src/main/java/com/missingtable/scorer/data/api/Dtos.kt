@@ -39,6 +39,8 @@ data class MeProfile(
     @SerialName("team_id") val teamId: Int? = null,
     @SerialName("club_id") val clubId: Int? = null,
     @SerialName("display_name") val displayName: String? = null,
+    /** Remembered filters per view, shared with web and iOS (SB-1717); absent for most accounts. */
+    @SerialName("filter_memory") val filterMemory: JsonObject? = null,
 )
 
 @Serializable
